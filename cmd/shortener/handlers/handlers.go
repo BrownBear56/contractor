@@ -25,11 +25,6 @@ func generateID() string {
 }
 
 func PostHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Invalid method", http.StatusBadRequest)
-		return
-	}
-
 	body, err := io.ReadAll(r.Body)
 	if err != nil || len(strings.TrimSpace(string(body))) == 0 {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
