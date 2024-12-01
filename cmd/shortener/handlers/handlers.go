@@ -13,6 +13,7 @@ import (
 var (
 	urlStore = make(map[string]string)
 	mu       sync.RWMutex
+	baseURL  string
 )
 
 func generateID() string {
@@ -22,6 +23,10 @@ func generateID() string {
 		panic("failed to generate random ID")
 	}
 	return base64.URLEncoding.EncodeToString(bytes)
+}
+
+func InitHandlers(bURL string) {
+	baseURL = bURL
 }
 
 func PostHandler(w http.ResponseWriter, r *http.Request) {
@@ -38,7 +43,7 @@ func PostHandler(w http.ResponseWriter, r *http.Request) {
 	urlStore[id] = originalURL
 	mu.Unlock()
 
-	shortURL := fmt.Sprintf("http://localhost:8080/%s", id)
+	shortURL := fmt.Sprintf("%s/%s", baseURL, id)
 	w.WriteHeader(http.StatusCreated)
 	w.Header().Set("Content-Type", "text/plain")
 	_, _ = w.Write([]byte(shortURL))
