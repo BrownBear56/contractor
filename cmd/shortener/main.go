@@ -7,10 +7,15 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/BrownBear56/contractor/cmd/shortener/config"
 	"github.com/BrownBear56/contractor/cmd/shortener/handlers"
 )
 
 func main() {
+	cfg := config.NewConfig()
+
+	handlers.InitHandlers(cfg.BaseURL)
+
 	r := chi.NewRouter()
 
 	r.Use(middleware.Logger)
@@ -23,8 +28,8 @@ func main() {
 		handlers.GetHandler(w, r)
 	})
 
-	fmt.Println("Server is running on http://localhost:8080")
-	if err := http.ListenAndServe(":8080", r); err != nil {
+	fmt.Printf("Server is running on http://%s\n", cfg.Address)
+	if err := http.ListenAndServe(cfg.Address, r); err != nil {
 		panic(err)
 	}
 }
