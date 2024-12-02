@@ -3,6 +3,7 @@ package config
 import (
 	"flag"
 	"fmt"
+	"os"
 )
 
 type Config struct {
@@ -11,18 +12,35 @@ type Config struct {
 }
 
 func NewConfig() *Config {
-	address := flag.String("a", "localhost:8080", "HTTP server address (e.g., localhost:8888)")
-	baseURL := flag.String("b", "http://localhost:8080", "Base URL for shortened links (e.g., http://localhost:8000/qsd54gFg)")
+	// Флаги командной строки
+	addressFlag := flag.String("a", "localhost:8080", "HTTP server address (e.g., localhost:8888)")
+	baseURLFlag := flag.String("b", "http://localhost:8080", "Base URL for shortened links (e.g., http://localhost:8000/qsd54gFg)")
 
 	flag.Parse()
 
-	if *baseURL == "" {
+	// Переменные окружения
+	addressEnv := os.Getenv("SERVER_ADDRESS")
+	baseURLEnv := os.Getenv("BASE_URL")
+
+	// Приоритет: переменные окружения → флаги → значения по умолчанию
+	address := addressEnv
+	if address == "" {
+		address = *addressFlag
+	}
+
+	baseURL := baseURLEnv
+	if baseURL == "" {
+		baseURL = *baseURLFlag
+	}
+
+	// Валидация базового URL
+	if baseURL == "" {
 		fmt.Println("Base URL cannot be empty. Using default value.")
-		*baseURL = "http://localhost:8080"
+		baseURL = "http://localhost:8080"
 	}
 
 	return &Config{
-		Address: *address,
-		BaseURL: *baseURL,
+		Address: address,
+		BaseURL: baseURL,
 	}
 }
