@@ -2,7 +2,7 @@ package config
 
 import (
 	"flag"
-	"fmt"
+	"log"
 	"os"
 )
 
@@ -12,30 +12,30 @@ type Config struct {
 }
 
 func NewConfig() *Config {
-	// Флаги командной строки
-	addressFlag := flag.String("a", "localhost:8080", "HTTP server address (e.g., localhost:8888)")
-	baseURLFlag := flag.String("b", "http://localhost:8080", "Base URL for shortened links (e.g., http://localhost:8000/qsd54gFg)")
+	// Флаги командной строки.
+	addressFlag := flag.String("a", "localhost:8080", "HTTP server address.")
+	baseURLFlag := flag.String("b", "http://localhost:8080", "Base URL for shortened links.")
 
 	flag.Parse()
 
-	// Переменные окружения
-	addressEnv := os.Getenv("SERVER_ADDRESS")
-	baseURLEnv := os.Getenv("BASE_URL")
+	// Переменные окружения.
+	addressEnv, addressExists := os.LookupEnv("SERVER_ADDRESS")
+	baseURLEnv, baseURLExists := os.LookupEnv("BASE_URL")
 
-	// Приоритет: переменные окружения → флаги → значения по умолчанию
-	address := addressEnv
-	if address == "" {
-		address = *addressFlag
+	// Приоритет: переменные окружения → флаги → значения по умолчанию.
+	address := *addressFlag
+	if addressExists {
+		address = addressEnv
 	}
 
-	baseURL := baseURLEnv
-	if baseURL == "" {
-		baseURL = *baseURLFlag
+	baseURL := *baseURLFlag
+	if baseURLExists {
+		baseURL = baseURLEnv
 	}
 
-	// Валидация базового URL
+	// Валидация базового URL.
 	if baseURL == "" {
-		fmt.Println("Base URL cannot be empty. Using default value.")
+		log.Println("Base URL cannot be empty. Using default value.")
 		baseURL = "http://localhost:8080"
 	}
 

@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	"log"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -14,22 +14,22 @@ import (
 func main() {
 	cfg := config.NewConfig()
 
-	handlers.InitHandlers(cfg.BaseURL)
+	urlShortener := handlers.NewURLShortener(cfg.BaseURL)
 
 	r := chi.NewRouter()
 
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 
-	r.Post("/", handlers.PostHandler)
+	r.Post("/", urlShortener.PostHandler)
 	r.Get("/{id}", func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
 		r.URL.Path = "/" + id
-		handlers.GetHandler(w, r)
+		urlShortener.GetHandler(w, r)
 	})
 
-	fmt.Printf("Server is running on http://%s\n", cfg.Address)
+	log.Printf("Server is running on http://%s\n", cfg.Address)
 	if err := http.ListenAndServe(cfg.Address, r); err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 }
