@@ -12,6 +12,8 @@ import (
 
 func makeRequest(t *testing.T, handler http.HandlerFunc, method, path, body string) (
 	*httptest.ResponseRecorder, func()) {
+	t.Helper()
+
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	w := httptest.NewRecorder()
 	handler(w, req)
@@ -87,7 +89,7 @@ func TestGetHandler(t *testing.T) {
 	testURL := "http://example.com"
 
 	urlShortener := NewURLShortener("http://localhost:8080")
-	urlShortener.storage.save(testID, testURL)
+	urlShortener.storage.urlStore[testID] = testURL
 
 	tests := []struct {
 		name           string

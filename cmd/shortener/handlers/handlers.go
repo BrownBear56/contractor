@@ -25,24 +25,6 @@ type URLShortener struct {
 	baseURL string
 }
 
-// В будущем можно перевести на генерацию GUID.
-func generateID(storage *Storage) (string, error) {
-	const idLength = 6
-	for {
-		bytes := make([]byte, idLength)
-		_, err := rand.Read(bytes)
-		if err != nil {
-			return "", fmt.Errorf("failed to generate random ID: %w", err)
-		}
-		id := base64.URLEncoding.EncodeToString(bytes)
-
-		// Проверяем коллизию.
-		if _, exists := storage.get(id); !exists {
-			return id, nil
-		}
-	}
-}
-
 func newStorage() *Storage {
 	return &Storage{
 		mu:       &sync.Mutex{},
@@ -51,24 +33,36 @@ func newStorage() *Storage {
 	}
 }
 
-func NewURLShortener(baseURL string) *URLShortener {
-	return &URLShortener{
-		baseURL: baseURL,
-		storage: newStorage(),
-	}
-}
+// В будущем можно перевести на генерацию GUID.
+func (s *Storage) generateAndSaveID(originalURL string) (string, error) {
+	const idLength = 6
+	const maxRetries = 10
 
-func (s *Storage) save(id, originalURL string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Если URL уже существует, ничего не делаем.
-	if _, exists := s.reverse[originalURL]; exists {
-		return
+	// Проверяем, существует ли уже такой URL.
+	if existingID, exists := s.reverse[originalURL]; exists {
+		return existingID, nil // Возвращаем существующий ID.
 	}
 
-	s.urlStore[id] = originalURL
-	s.reverse[originalURL] = id
+	for range maxRetries {
+		bytes := make([]byte, idLength)
+		_, err := rand.Read(bytes)
+		if err != nil {
+			return "", fmt.Errorf("failed to generate random ID: %w", err)
+		}
+		id := base64.URLEncoding.EncodeToString(bytes)
+
+		if _, exists := s.urlStore[id]; !exists {
+			// Сохраняем идентификатор и URL.
+			s.urlStore[id] = originalURL
+			s.reverse[originalURL] = id
+			return id, nil
+		}
+	}
+
+	return "", fmt.Errorf("failed to generate unique ID after %d attempts", maxRetries)
 }
 
 func (s *Storage) get(id string) (string, bool) {
@@ -83,6 +77,13 @@ func (s *Storage) getIDByURL(originalURL string) (string, bool) {
 	defer s.mu.Unlock()
 	id, ok := s.reverse[originalURL]
 	return id, ok
+}
+
+func NewURLShortener(baseURL string) *URLShortener {
+	return &URLShortener{
+		baseURL: baseURL,
+		storage: newStorage(),
+	}
 }
 
 func (u *URLShortener) PostHandler(w http.ResponseWriter, r *http.Request) {
@@ -101,7 +102,7 @@ func (u *URLShortener) PostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Проверяем, существует ли уже такой URL.
-	if existingID, found := u.storage.getIDByURL(originalURL); found {
+	if existingID, ok := u.storage.getIDByURL(originalURL); ok {
 		shortURL := fmt.Sprintf("%s/%s", u.baseURL, existingID)
 		w.WriteHeader(http.StatusOK) // Идемпотентное поведение: возвращаем 200 OK.
 		w.Header().Set("Content-Type", "text/plain")
@@ -109,14 +110,12 @@ func (u *URLShortener) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, err := generateID(u.storage)
+	id, err := u.storage.generateAndSaveID(originalURL)
 	if err != nil {
 		log.Printf("Error generating ID: %v\n", err)
 		http.Error(w, "Failed to generate ID", http.StatusInternalServerError)
 		return
 	}
-
-	u.storage.save(id, originalURL)
 
 	shortURL := fmt.Sprintf("%s/%s", u.baseURL, id)
 	w.WriteHeader(http.StatusCreated)

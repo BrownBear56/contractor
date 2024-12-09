@@ -18,19 +18,15 @@ func NewConfig() *Config {
 
 	flag.Parse()
 
-	// Переменные окружения.
-	addressEnv, addressExists := os.LookupEnv("SERVER_ADDRESS")
-	baseURLEnv, baseURLExists := os.LookupEnv("BASE_URL")
-
 	// Приоритет: переменные окружения → флаги → значения по умолчанию.
 	address := *addressFlag
-	if addressExists {
-		address = addressEnv
+	if envAddress, ok := os.LookupEnv("SERVER_ADDRESS"); ok {
+		address = envAddress
 	}
 
 	baseURL := *baseURLFlag
-	if baseURLExists {
-		baseURL = baseURLEnv
+	if envBaseURL, ok := os.LookupEnv("BASE_URL"); ok {
+		baseURL = envBaseURL
 	}
 
 	// Валидация базового URL.
