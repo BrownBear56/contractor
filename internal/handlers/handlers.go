@@ -33,36 +33,29 @@ func newStorage() *Storage {
 	}
 }
 
-// В будущем можно перевести на генерацию GUID.
-func (s *Storage) generateAndSaveID(originalURL string) (string, error) {
+func generateID() (string, error) {
 	const idLength = 6
-	const maxRetries = 10
+	bytes := make([]byte, idLength)
+	_, err := rand.Read(bytes)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate random ID: %w", err)
+	}
+	return base64.URLEncoding.EncodeToString(bytes), nil
+}
 
+func (s *Storage) saveID(id, originalURL string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Проверяем, существует ли уже такой URL.
-	if existingID, ok := s.reverse[originalURL]; ok {
-		return existingID, nil // Возвращаем существующий ID.
+	// Проверяем, существует ли уже идентификатор.
+	if _, ok := s.urlStore[id]; ok {
+		return fmt.Errorf("ID %s already exists", id)
 	}
 
-	for range maxRetries {
-		bytes := make([]byte, idLength)
-		_, err := rand.Read(bytes)
-		if err != nil {
-			return "", fmt.Errorf("failed to generate random ID: %w", err)
-		}
-		id := base64.URLEncoding.EncodeToString(bytes)
-
-		if _, ok := s.urlStore[id]; !ok {
-			// Сохраняем идентификатор и URL.
-			s.urlStore[id] = originalURL
-			s.reverse[originalURL] = id
-			return id, nil
-		}
-	}
-
-	return "", fmt.Errorf("failed to generate unique ID after %d attempts", maxRetries)
+	// Сохраняем идентификатор и URL.
+	s.urlStore[id] = originalURL
+	s.reverse[originalURL] = id
+	return nil
 }
 
 func (s *Storage) get(id string) (string, bool) {
@@ -110,10 +103,23 @@ func (u *URLShortener) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, err := u.storage.generateAndSaveID(originalURL)
-	if err != nil {
-		log.Printf("Error generating ID: %v\n", err)
-		http.Error(w, "Failed to generate ID", http.StatusInternalServerError)
+	const maxRetries = 10
+	var id string
+	for range maxRetries {
+		id, err = generateID()
+		if err != nil {
+			log.Printf("Error generating ID: %v\n", err)
+			continue
+		}
+
+		// Попытка сохранить ID.
+		if err := u.storage.saveID(id, originalURL); err == nil {
+			break
+		}
+	}
+
+	if id == "" {
+		http.Error(w, "Failed to generate unique ID", http.StatusInternalServerError)
 		return
 	}
 
