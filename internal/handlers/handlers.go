@@ -42,7 +42,7 @@ func (s *Storage) generateAndSaveID(originalURL string) (string, error) {
 	defer s.mu.Unlock()
 
 	// Проверяем, существует ли уже такой URL.
-	if existingID, exists := s.reverse[originalURL]; exists {
+	if existingID, ok := s.reverse[originalURL]; ok {
 		return existingID, nil // Возвращаем существующий ID.
 	}
 
@@ -54,7 +54,7 @@ func (s *Storage) generateAndSaveID(originalURL string) (string, error) {
 		}
 		id := base64.URLEncoding.EncodeToString(bytes)
 
-		if _, exists := s.urlStore[id]; !exists {
+		if _, ok := s.urlStore[id]; !ok {
 			// Сохраняем идентификатор и URL.
 			s.urlStore[id] = originalURL
 			s.reverse[originalURL] = id

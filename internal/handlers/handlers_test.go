@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,22 +10,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 )
-
-func makeRequest(t *testing.T, handler http.HandlerFunc, method, path, body string) (
-	*httptest.ResponseRecorder, func()) {
-	t.Helper()
-
-	req := httptest.NewRequest(method, path, strings.NewReader(body))
-	w := httptest.NewRecorder()
-	handler(w, req)
-
-	// Возвращаем функцию для закрытия тела
-	return w, func() {
-		if err := w.Result().Body.Close(); err != nil {
-			t.Errorf("failed to close response body: %v", err)
-		}
-	}
-}
 
 func TestPostHandler(t *testing.T) {
 	tests := []struct {
@@ -70,13 +55,27 @@ func TestPostHandler(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resp, closeBody := makeRequest(t, urlShortener.PostHandler, http.MethodPost, "/", tt.body)
-			defer closeBody()
+			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(tt.body))
+			w := httptest.NewRecorder()
 
-			assert.Equal(t, tt.expectedStatus, resp.Result().StatusCode, "unexpected status code")
+			urlShortener.PostHandler(w, req)
+
+			resp := w.Result()
+			defer func() {
+				if err := resp.Body.Close(); err != nil {
+					t.Errorf("failed to close response body: %v", err)
+				}
+			}()
+
+			assert.Equal(t, tt.expectedStatus, resp.StatusCode, "unexpected status code")
 
 			if tt.expectedStatus == http.StatusCreated {
-				body := resp.Body.String()
+				bodyBytes, err := io.ReadAll(resp.Body)
+				if err != nil {
+					t.Errorf("failed to read response body: %v", err)
+				}
+
+				body := string(bodyBytes)
 				assert.True(t, strings.HasPrefix(body, tt.expectedPrefix),
 					"expected response to start with %q, got %q", tt.expectedPrefix, body)
 			}
@@ -119,12 +118,22 @@ func TestGetHandler(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resp, closeBody := makeRequest(t, urlShortener.GetHandler, http.MethodGet, tt.path, "")
-			defer closeBody()
-			assert.Equal(t, tt.expectedStatus, resp.Result().StatusCode, "unexpected status code")
+			req := httptest.NewRequest(http.MethodPost, tt.path, http.NoBody)
+			w := httptest.NewRecorder()
+
+			urlShortener.GetHandler(w, req)
+
+			resp := w.Result()
+			defer func() {
+				if err := resp.Body.Close(); err != nil {
+					t.Errorf("failed to close response body: %v", err)
+				}
+			}()
+
+			assert.Equal(t, tt.expectedStatus, resp.StatusCode, "unexpected status code")
 
 			if tt.expectedHeader != "" {
-				location := resp.Result().Header.Get("Location")
+				location := resp.Header.Get("Location")
 				assert.Equal(t, tt.expectedHeader, location,
 					"expected Location header %q, got %q", tt.expectedHeader, location)
 			}
@@ -145,10 +154,20 @@ func TestConcurrentAccess(t *testing.T) {
 	for range goroutineIndices {
 		go func() {
 			defer wg.Done()
-			resp, closeBody := makeRequest(t, urlShortener.PostHandler, http.MethodPost, "/", url)
-			defer closeBody()
+			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(url))
+			w := httptest.NewRecorder()
+
+			urlShortener.PostHandler(w, req)
+
+			resp := w.Result()
+			defer func() {
+				if err := resp.Body.Close(); err != nil {
+					t.Errorf("failed to close response body: %v", err)
+				}
+			}()
+
 			// Статус может быть 201 или 200.
-			assert.True(t, resp.Result().StatusCode == http.StatusCreated || resp.Result().StatusCode == http.StatusOK)
+			assert.True(t, resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusOK)
 		}()
 	}
 	wg.Wait()

@@ -557,8 +557,8 @@ issues:
   exclude-rules:
     - path: "_test\\.go"
       text: "fieldalignment: struct with \\d+ pointer bytes could be \\d+"
-    - path: "cmd/shortener/handlers/handlers_test.go"
-      text: "response body must be closed"
+    #- path: "cmd/shortener/handlers/handlers_test.go"
+    #  text: "response body must be closed"
   fix: false
   max-issues-per-linter: 0
   max-same-issues: 0
