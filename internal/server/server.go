@@ -2,13 +2,15 @@ package server
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
+	"go.uber.org/zap"
 
 	"github.com/BrownBear56/contractor/internal/config"
 	"github.com/BrownBear56/contractor/internal/handlers"
+	"github.com/BrownBear56/contractor/internal/logger"
 )
 
 type Server struct {
@@ -22,7 +24,13 @@ func New(cfg *config.Config) *Server {
 		cfg:    cfg,
 	}
 
+	if err := logger.Initialize("info"); err != nil {
+		log.Println("Failed logger initialize")
+	}
+
+	logger.Log.Info("Setup routers", zap.String("status", "processing"))
 	s.setupRoutes()
+	logger.Log.Info("Setup routers", zap.String("status", "success"))
 
 	return s
 }
@@ -30,8 +38,10 @@ func New(cfg *config.Config) *Server {
 func (s *Server) setupRoutes() {
 	urlShortener := handlers.NewURLShortener(s.cfg.BaseURL)
 
-	s.router.Use(middleware.Logger)
-	s.router.Use(middleware.Recoverer)
+	// Подключаем middleware.
+	s.router.Use(logger.LoggingMiddleware) // Наше кастомное логирование.
+	//s.router.Use(middleware.Logger)        // Стандартное chi-логирование.
+	//s.router.Use(middleware.Recoverer)
 
 	s.router.Post("/", urlShortener.PostHandler)
 	s.router.Get("/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -43,9 +53,12 @@ func (s *Server) setupRoutes() {
 
 func (s *Server) Start() error {
 	err := http.ListenAndServe(s.cfg.Address, s.router)
+
 	if err != nil {
 		return fmt.Errorf("failed to start server on %s: %w", s.cfg.Address, err)
 	}
+
+	logger.Log.Info("Server is running", zap.String("address", s.cfg.Address))
 
 	return nil
 }
