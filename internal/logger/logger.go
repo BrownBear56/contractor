@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"fmt"
 	"net/http"
 
 	"go.uber.org/zap"
@@ -27,8 +28,11 @@ func (rr *responseRecorder) WriteHeader(code int) {
 // Переопределяем метод Write для подсчёта длины содержимого.
 func (rr *responseRecorder) Write(b []byte) (int, error) {
 	size, err := rr.responseWriter.Write(b)
+	if err != nil {
+		return size, fmt.Errorf("response write failed: %w", err)
+	}
 	rr.contentLength += size
-	return size, err
+	return size, nil
 }
 
 // Log будет доступен всему коду как синглтон.
@@ -41,7 +45,7 @@ func Initialize(level string) error {
 	// преобразуем текстовый уровень логирования в zap.AtomicLevel.
 	lvl, err := zap.ParseAtomicLevel(level)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to parse log level '%s': %w", level, err)
 	}
 	// создаём новую конфигурацию логера.
 	cfg := zap.Config{
@@ -65,14 +69,13 @@ func Initialize(level string) error {
 	// создаём логер на основе конфигурации.
 	zl, err := cfg.Build()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to build logger configuration: %w", err)
 	}
 	// устанавливаем синглтон.
 	Log = zl
 	return nil
 }
 
-// RequestLogger — middleware-логер для входящих HTTP-запросов.
 func LoggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Обёртка для записи ответа с логированием.

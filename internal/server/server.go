@@ -39,9 +39,7 @@ func (s *Server) setupRoutes() {
 	urlShortener := handlers.NewURLShortener(s.cfg.BaseURL)
 
 	// Подключаем middleware.
-	s.router.Use(logger.LoggingMiddleware) // Наше кастомное логирование.
-	//s.router.Use(middleware.Logger)        // Стандартное chi-логирование.
-	//s.router.Use(middleware.Recoverer)
+	s.router.Use(logger.LoggingMiddleware) // Наше кастомное middleware-логирование.
 
 	s.router.Post("/", urlShortener.PostHandler)
 	s.router.Get("/{id}", func(w http.ResponseWriter, r *http.Request) {
