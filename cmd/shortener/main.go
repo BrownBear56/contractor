@@ -12,7 +12,6 @@ func main() {
 
 	srv := server.New(cfg)
 
-	log.Printf("Server is running on http://%s\n", cfg.Address)
 	if err := srv.Start(); err != nil {
 		log.Fatal(err)
 	}
