@@ -9,6 +9,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/BrownBear56/contractor/internal/config"
+	"github.com/BrownBear56/contractor/internal/gzip"
 	"github.com/BrownBear56/contractor/internal/handlers"
 	"github.com/BrownBear56/contractor/internal/logger"
 )
@@ -40,6 +41,7 @@ func (s *Server) setupRoutes() {
 
 	// Подключаем middleware.
 	s.router.Use(logger.LoggingMiddleware) // Наше кастомное middleware-логирование.
+	s.router.Use(gzip.GzipMiddleware)      // Наше кастомное middleware-сжатие.
 
 	s.router.Post("/api/shorten", urlShortener.PostJSONHandler)
 	s.router.Post("/", urlShortener.PostHandler)
