@@ -37,7 +37,7 @@ func New(cfg *config.Config) *Server {
 }
 
 func (s *Server) setupRoutes() {
-	urlShortener := handlers.NewURLShortener(s.cfg.BaseURL)
+	urlShortener := handlers.NewURLShortener(s.cfg.BaseURL, s.cfg.FileStoragePath)
 
 	// Подключаем middleware.
 	s.router.Use(logger.LoggingMiddleware) // Наше кастомное middleware-логирование.

@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -52,8 +53,12 @@ func TestPostJSONHandler(t *testing.T) {
 		},
 	}
 
+	// Создаём временную директорию для теста.
+	tempDir := t.TempDir()
+	filePath := filepath.Join(tempDir, "storage_test.json")
+
 	// Устанавливаем базовый URL для тестов.
-	urlShortener := NewURLShortener("http://localhost:8080")
+	urlShortener := NewURLShortener("http://localhost:8080", filePath)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -129,8 +134,12 @@ func TestPostHandler(t *testing.T) {
 		},
 	}
 
+	// Создаём временную директорию для теста.
+	tempDir := t.TempDir()
+	filePath := filepath.Join(tempDir, "storage_test.json")
+
 	// Устанавливаем базовый URL для тестов.
-	urlShortener := NewURLShortener("http://localhost:8080")
+	urlShortener := NewURLShortener("http://localhost:8080", filePath)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -166,8 +175,8 @@ func TestGetHandler(t *testing.T) {
 	testID := "testID"
 	testURL := "http://example.com"
 
-	urlShortener := NewURLShortener("http://localhost:8080")
-	urlShortener.storage.urlStore[testID] = testURL
+	urlShortener := NewURLShortener("http://localhost:8080", "storage.json")
+	urlShortener.storage.URLs[testID] = testURL
 
 	tests := []struct {
 		name           string
@@ -222,7 +231,7 @@ func TestGetHandler(t *testing.T) {
 
 // Тесты для конкурентного использования.
 func TestConcurrentAccess(t *testing.T) {
-	urlShortener := NewURLShortener("http://localhost:8080")
+	urlShortener := NewURLShortener("http://localhost:8080", "storage.json")
 
 	var wg sync.WaitGroup
 	const goroutines = 100

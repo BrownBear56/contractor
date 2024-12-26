@@ -24,3 +24,5 @@ vendor/
 
 #
 golangci-lint/
+internal/handlers/*.json
+*.json

@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 
@@ -18,23 +19,16 @@ import (
 
 // Storage инкапсулирует мьютекс и хранилище URL-ов.
 type Storage struct {
-	mu       *sync.Mutex
-	urlStore map[string]string
-	reverse  map[string]string
+	mu          *sync.Mutex
+	URLs        map[string]string
+	reverseURLs map[string]string
+	filePath    string
 }
 
 // URLShortener хранит базовый URL и объект Storage.
 type URLShortener struct {
 	storage *Storage
 	baseURL string
-}
-
-func newStorage() *Storage {
-	return &Storage{
-		mu:       &sync.Mutex{},
-		urlStore: make(map[string]string),
-		reverse:  make(map[string]string),
-	}
 }
 
 func generateID() (string, error) {
@@ -52,27 +46,31 @@ func (s *Storage) saveID(id, originalURL string) error {
 	defer s.mu.Unlock()
 
 	// Проверяем, существует ли уже идентификатор.
-	if _, ok := s.urlStore[id]; ok {
+	if _, ok := s.URLs[id]; ok {
 		return fmt.Errorf("ID %s already exists", id)
 	}
 
 	// Сохраняем идентификатор и URL.
-	s.urlStore[id] = originalURL
-	s.reverse[originalURL] = id
+	s.URLs[id] = originalURL
+	s.reverseURLs[originalURL] = id
+	if err := s.saveToFile(); err != nil {
+		return fmt.Errorf("failed to save data: %w", err)
+	}
+
 	return nil
 }
 
 func (s *Storage) get(id string) (string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	originalURL, ok := s.urlStore[id]
+	originalURL, ok := s.URLs[id]
 	return originalURL, ok
 }
 
 func (s *Storage) getIDByURL(originalURL string) (string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	id, ok := s.reverse[originalURL]
+	id, ok := s.reverseURLs[originalURL]
 	return id, ok
 }
 
@@ -115,10 +113,79 @@ func (u *URLShortener) getOrCreateShortURL(originalURL string) (string, bool, er
 	return fmt.Sprintf("%s/%s", u.baseURL, id), false, nil
 }
 
-func NewURLShortener(baseURL string) *URLShortener {
+// LoadFromFile загружает данные из файла.
+func (s *Storage) loadFromFile() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	file, err := os.Open(s.filePath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil // Файл ещё не существует.
+	} else if err != nil {
+		return fmt.Errorf("error load from file: %w", err)
+	}
+	defer func() {
+		if err := file.Close(); err != nil {
+			log.Printf("Error closing file: %v\n", err)
+		}
+	}()
+
+	decoder := json.NewDecoder(file)
+	for {
+		var data map[string]string
+		if err := decoder.Decode(&data); err != nil {
+			return fmt.Errorf("error decode data from file: %w", err)
+		}
+		if short, ok := data["short_url"]; ok {
+			original := data["original_url"]
+			s.URLs[original] = short
+			s.reverseURLs[short] = original
+		}
+	}
+}
+
+func newStorage(filePath string) *Storage {
+	s := &Storage{
+		mu:          &sync.Mutex{},
+		URLs:        make(map[string]string),
+		reverseURLs: make(map[string]string),
+		filePath:    filePath,
+	}
+	if err := s.loadFromFile(); err != nil { // Загружаем данные при инициализации.
+		log.Printf("error load from file: %v", err)
+	}
+	return s
+}
+
+// SaveToFile сохраняет данные в файл.
+func (s *Storage) saveToFile() error {
+	file, err := os.Create(s.filePath)
+	if err != nil {
+		log.Printf("Error creating file: %v\n", err)
+	}
+	defer func() {
+		if err := file.Close(); err != nil {
+			log.Printf("Error closing file: %v\n", err)
+		}
+	}()
+
+	encoder := json.NewEncoder(file)
+	for original, short := range s.URLs {
+		data := map[string]string{
+			"short_url":    short,
+			"original_url": original,
+		}
+		if err := encoder.Encode(data); err != nil {
+			return fmt.Errorf("error encoding JSON: %w", err)
+		}
+	}
+	return nil
+}
+
+func NewURLShortener(baseURL string, fileStoragePath string) *URLShortener {
 	return &URLShortener{
 		baseURL: baseURL,
-		storage: newStorage(),
+		storage: newStorage(fileStoragePath),
 	}
 }
 

@@ -7,14 +7,16 @@ import (
 )
 
 type Config struct {
-	Address string
-	BaseURL string
+	Address         string
+	BaseURL         string
+	FileStoragePath string
 }
 
 func NewConfig() *Config {
 	// Флаги командной строки.
 	addressFlag := flag.String("a", "localhost:8080", "HTTP server address.")
 	baseURLFlag := flag.String("b", "http://localhost:8080", "Base URL for shortened links.")
+	filePathFlag := flag.String("f", "storage.json", "Path to file storage.")
 
 	flag.Parse()
 
@@ -29,6 +31,11 @@ func NewConfig() *Config {
 		baseURL = envBaseURL
 	}
 
+	fileStoragePath := *filePathFlag
+	if envFilePath, ok := os.LookupEnv("FILE_STORAGE_PATH"); ok {
+		fileStoragePath = envFilePath
+	}
+
 	// Валидация базового URL.
 	if baseURL == "" {
 		log.Println("Base URL cannot be empty. Using default value.")
@@ -36,7 +43,8 @@ func NewConfig() *Config {
 	}
 
 	return &Config{
-		Address: address,
-		BaseURL: baseURL,
+		Address:         address,
+		BaseURL:         baseURL,
+		FileStoragePath: fileStoragePath,
 	}
 }
