@@ -4,6 +4,9 @@ import (
 	"flag"
 	"log"
 	"os"
+
+	"github.com/BrownBear56/contractor/internal/logger"
+	"go.uber.org/zap/zapcore"
 )
 
 type Config struct {
@@ -12,7 +15,31 @@ type Config struct {
 	FileStoragePath string
 }
 
-func NewConfig() *Config {
+func NewConfig(parentLogger logger.Logger) *Config {
+	// Настройки для нового логгера.
+	customEncoderConfig := zapcore.EncoderConfig{
+		TimeKey:       "timestamp",
+		LevelKey:      "severity",
+		NameKey:       "logger",
+		CallerKey:     "caller",
+		MessageKey:    "message",
+		StacktraceKey: "stacktrace",
+		EncodeTime:    zapcore.ISO8601TimeEncoder,
+		EncodeLevel:   zapcore.CapitalLevelEncoder,
+		EncodeCaller:  zapcore.ShortCallerEncoder,
+	}
+
+	configLogger, err := parentLogger.(*logger.ZapLogger).ReconfigureAndNamed(
+		"Config",
+		"info",             // Уровень логирования
+		"json",             // Формат логов
+		[]string{"stdout"}, // Вывод логов
+		customEncoderConfig,
+	)
+	if err != nil {
+		log.Fatalf("Failed to reconfigure logger: %v", err)
+	}
+
 	// Флаги командной строки.
 	addressFlag := flag.String("a", "localhost:8080", "HTTP server address.")
 	baseURLFlag := flag.String("b", "http://localhost:8080", "Base URL for shortened links.")
@@ -38,7 +65,7 @@ func NewConfig() *Config {
 
 	// Валидация базового URL.
 	if baseURL == "" {
-		log.Println("Base URL cannot be empty. Using default value.")
+		configLogger.Info("Base URL cannot be empty. Using default value.")
 		baseURL = "http://localhost:8080"
 	}
 

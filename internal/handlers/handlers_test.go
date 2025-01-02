@@ -10,8 +10,10 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/BrownBear56/contractor/internal/logger"
 	"github.com/BrownBear56/contractor/internal/models"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/zap"
 )
 
 func TestPostJSONHandler(t *testing.T) {
@@ -56,9 +58,19 @@ func TestPostJSONHandler(t *testing.T) {
 	// Создаём временную директорию для теста.
 	tempDir := t.TempDir()
 	filePath := filepath.Join(tempDir, "storage_test.json")
+	zapLogger, err := zap.NewDevelopment()
+	if err != nil {
+		t.Errorf("Failed to initialize logger: %v", err)
+		return
+	}
+	defer func() {
+		_ = zapLogger.Sync()
+	}()
+
+	testLogger := logger.NewZapLogger(zapLogger)
 
 	// Устанавливаем базовый URL для тестов.
-	urlShortener := NewURLShortener("http://localhost:8080", filePath)
+	urlShortener := NewURLShortener("http://localhost:8080", filePath, testLogger)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -72,6 +84,7 @@ func TestPostJSONHandler(t *testing.T) {
 			defer func() {
 				if err := resp.Body.Close(); err != nil {
 					t.Errorf("failed to close response body: %v", err)
+					return
 				}
 			}()
 
@@ -81,11 +94,13 @@ func TestPostJSONHandler(t *testing.T) {
 				bodyBytes, err := io.ReadAll(resp.Body)
 				if err != nil {
 					t.Errorf("failed to read response body: %v", err)
+					return
 				}
 
 				var response models.Response
 				if err := json.Unmarshal(bodyBytes, &response); err != nil {
 					t.Errorf("failed to decode response JSON: %v", err)
+					return
 				}
 
 				assert.True(t, strings.HasPrefix(response.Result, tt.expectedPrefix),
@@ -137,9 +152,19 @@ func TestPostHandler(t *testing.T) {
 	// Создаём временную директорию для теста.
 	tempDir := t.TempDir()
 	filePath := filepath.Join(tempDir, "storage_test.json")
+	zapLogger, err := zap.NewDevelopment()
+	if err != nil {
+		t.Errorf("Failed to initialize logger: %v", err)
+		return
+	}
+	defer func() {
+		_ = zapLogger.Sync()
+	}()
+
+	testLogger := logger.NewZapLogger(zapLogger)
 
 	// Устанавливаем базовый URL для тестов.
-	urlShortener := NewURLShortener("http://localhost:8080", filePath)
+	urlShortener := NewURLShortener("http://localhost:8080", filePath, testLogger)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -152,6 +177,7 @@ func TestPostHandler(t *testing.T) {
 			defer func() {
 				if err := resp.Body.Close(); err != nil {
 					t.Errorf("failed to close response body: %v", err)
+					return
 				}
 			}()
 
@@ -161,6 +187,7 @@ func TestPostHandler(t *testing.T) {
 				bodyBytes, err := io.ReadAll(resp.Body)
 				if err != nil {
 					t.Errorf("failed to read response body: %v", err)
+					return
 				}
 
 				body := string(bodyBytes)
@@ -174,8 +201,18 @@ func TestPostHandler(t *testing.T) {
 func TestGetHandler(t *testing.T) {
 	testID := "testID"
 	testURL := "http://example.com"
+	zapLogger, err := zap.NewDevelopment()
+	if err != nil {
+		t.Errorf("Failed to initialize logger: %v", err)
+		return
+	}
+	defer func() {
+		_ = zapLogger.Sync()
+	}()
 
-	urlShortener := NewURLShortener("http://localhost:8080", "storage.json")
+	testLogger := logger.NewZapLogger(zapLogger)
+
+	urlShortener := NewURLShortener("http://localhost:8080", "storage.json", testLogger)
 	urlShortener.storage.URLs[testID] = testURL
 
 	tests := []struct {
@@ -215,6 +252,7 @@ func TestGetHandler(t *testing.T) {
 			defer func() {
 				if err := resp.Body.Close(); err != nil {
 					t.Errorf("failed to close response body: %v", err)
+					return
 				}
 			}()
 
@@ -231,7 +269,18 @@ func TestGetHandler(t *testing.T) {
 
 // Тесты для конкурентного использования.
 func TestConcurrentAccess(t *testing.T) {
-	urlShortener := NewURLShortener("http://localhost:8080", "storage.json")
+	zapLogger, err := zap.NewDevelopment()
+	if err != nil {
+		t.Errorf("Failed to initialize logger: %v", err)
+		return
+	}
+	defer func() {
+		_ = zapLogger.Sync()
+	}()
+
+	testLogger := logger.NewZapLogger(zapLogger)
+
+	urlShortener := NewURLShortener("http://localhost:8080", "storage.json", testLogger)
 
 	var wg sync.WaitGroup
 	const goroutines = 100
@@ -251,6 +300,7 @@ func TestConcurrentAccess(t *testing.T) {
 			defer func() {
 				if err := resp.Body.Close(); err != nil {
 					t.Errorf("failed to close response body: %v", err)
+					return
 				}
 			}()
 

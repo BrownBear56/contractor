@@ -8,6 +8,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/BrownBear56/contractor/internal/logger"
+	"go.uber.org/zap"
 )
 
 func TestGzipMiddleware_RequestWithGzipEncoding(t *testing.T) {
@@ -28,6 +31,17 @@ func TestGzipMiddleware_RequestWithGzipEncoding(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/", &compressedBody)
 	req.Header.Set("Content-Encoding", "gzip")
 
+	zapLogger, err := zap.NewDevelopment()
+	if err != nil {
+		t.Errorf("Failed to initialize logger: %v", err)
+		return
+	}
+	defer func() {
+		_ = zapLogger.Sync()
+	}()
+
+	testLogger := logger.NewZapLogger(zapLogger)
+
 	// Обработчик для проверки разархивированных данных
 	handler := GzipMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Проверка разархивированного тела
@@ -37,8 +51,9 @@ func TestGzipMiddleware_RequestWithGzipEncoding(t *testing.T) {
 		}
 		if !bytes.Equal(bodyBytes, body) {
 			t.Errorf("expected body %s, got %s", string(body), string(bodyBytes))
+			return
 		}
-	}))
+	}), testLogger)
 
 	// Выполнение запроса
 	rec := httptest.NewRecorder()
@@ -50,6 +65,17 @@ func TestGzipMiddleware_ResponseWithGzipEncoding(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 	req.Header.Set("Accept-Encoding", "gzip")
 
+	zapLogger, err := zap.NewDevelopment()
+	if err != nil {
+		t.Errorf("Failed to initialize logger: %v", err)
+		return
+	}
+	defer func() {
+		_ = zapLogger.Sync()
+	}()
+
+	testLogger := logger.NewZapLogger(zapLogger)
+
 	// Ответ, который будет отправлен обработчиком
 	expectedBody := "test response"
 
@@ -59,7 +85,7 @@ func TestGzipMiddleware_ResponseWithGzipEncoding(t *testing.T) {
 		if _, err := w.Write([]byte(expectedBody)); err != nil {
 			t.Fatalf("failed to write response body: %v", err)
 		}
-	}))
+	}), testLogger)
 
 	// Выполнение запроса
 	rec := httptest.NewRecorder()
@@ -68,6 +94,7 @@ func TestGzipMiddleware_ResponseWithGzipEncoding(t *testing.T) {
 	// Проверка заголовков ответа
 	if rec.Header().Get("Content-Encoding") != "gzip" {
 		t.Errorf("expected Content-Encoding gzip, got %s", rec.Header().Get("Content-Encoding"))
+		return
 	}
 
 	// Проверка тела ответа
@@ -78,6 +105,7 @@ func TestGzipMiddleware_ResponseWithGzipEncoding(t *testing.T) {
 	defer func() {
 		if err := reader.Close(); err != nil {
 			t.Errorf("failed to close gzip reader: %v", err)
+			return
 		}
 	}()
 
@@ -87,12 +115,24 @@ func TestGzipMiddleware_ResponseWithGzipEncoding(t *testing.T) {
 	}
 	if string(responseBody) != expectedBody {
 		t.Errorf("expected response body %s, got %s", expectedBody, string(responseBody))
+		return
 	}
 }
 
 func TestGzipMiddleware_NoGzipSupport(t *testing.T) {
 	// Создание тестового запроса
 	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+
+	zapLogger, err := zap.NewDevelopment()
+	if err != nil {
+		t.Errorf("Failed to initialize logger: %v", err)
+		return
+	}
+	defer func() {
+		_ = zapLogger.Sync()
+	}()
+
+	testLogger := logger.NewZapLogger(zapLogger)
 
 	// Ответ, который будет отправлен обработчиком
 	expectedBody := "test response"
@@ -103,7 +143,7 @@ func TestGzipMiddleware_NoGzipSupport(t *testing.T) {
 		if _, err := w.Write([]byte(expectedBody)); err != nil {
 			t.Fatalf("failed to write response body: %v", err)
 		}
-	}))
+	}), testLogger)
 
 	// Выполнение запроса
 	rec := httptest.NewRecorder()
@@ -112,11 +152,13 @@ func TestGzipMiddleware_NoGzipSupport(t *testing.T) {
 	// Проверка отсутствия заголовка Content-Encoding
 	if rec.Header().Get("Content-Encoding") == "gzip" {
 		t.Errorf("unexpected Content-Encoding gzip")
+		return
 	}
 
 	// Проверка тела ответа
 	if rec.Body.String() != expectedBody {
 		t.Errorf("expected response body %s, got %s", expectedBody, rec.Body.String())
+		return
 	}
 }
 
@@ -125,10 +167,21 @@ func TestGzipMiddleware_InvalidGzipRequest(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("invalid gzip data"))
 	req.Header.Set("Content-Encoding", "gzip")
 
+	zapLogger, err := zap.NewDevelopment()
+	if err != nil {
+		t.Errorf("Failed to initialize logger: %v", err)
+		return
+	}
+	defer func() {
+		_ = zapLogger.Sync()
+	}()
+
+	testLogger := logger.NewZapLogger(zapLogger)
+
 	// Обработчик для проверки обработки ошибки
 	handler := GzipMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("handler should not be called for invalid gzip data")
-	}))
+	}), testLogger)
 
 	// Выполнение запроса
 	rec := httptest.NewRecorder()
@@ -137,11 +190,13 @@ func TestGzipMiddleware_InvalidGzipRequest(t *testing.T) {
 	// Проверка кода ответа
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected status code %d, got %d", http.StatusBadRequest, rec.Code)
+		return
 	}
 
 	// Проверка тела ответа
 	expectedError := "Invalid gzip content"
 	if !strings.Contains(rec.Body.String(), expectedError) {
 		t.Errorf("expected error message %s, got %s", expectedError, rec.Body.String())
+		return
 	}
 }

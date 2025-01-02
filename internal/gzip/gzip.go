@@ -4,9 +4,11 @@ import (
 	"compress/gzip"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
+
+	"github.com/BrownBear56/contractor/internal/logger"
+	"go.uber.org/zap"
 )
 
 type gzipResponseWriter struct {
@@ -23,7 +25,7 @@ func (grw *gzipResponseWriter) Write(data []byte) (int, error) {
 }
 
 // GzipMiddleware добавляет поддержку gzip-сжатия для входящих и исходящих данных.
-func GzipMiddleware(next http.Handler) http.Handler {
+func GzipMiddleware(next http.Handler, log logger.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Обработка входящих запросов с Content-Encoding: gzip.
 		if strings.Contains(r.Header.Get("Content-Encoding"), "gzip") {
@@ -34,7 +36,7 @@ func GzipMiddleware(next http.Handler) http.Handler {
 			}
 			defer func() {
 				if err := gzipReader.Close(); err != nil {
-					log.Printf("Error closing gzip reader: %v\n", err)
+					log.Error("Error closing gzip reader: %v\n", zap.Error(err))
 				}
 			}()
 			r.Body = io.NopCloser(gzipReader)
@@ -51,7 +53,7 @@ func GzipMiddleware(next http.Handler) http.Handler {
 		gzipWriter := gzip.NewWriter(w)
 		defer func() {
 			if err := gzipWriter.Close(); err != nil {
-				log.Printf("Error closing gzip writer: %v\n", err)
+				log.Error("Error closing gzip writer: %v\n", zap.Error(err))
 			}
 		}()
 

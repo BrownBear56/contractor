@@ -14,21 +14,45 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/BrownBear56/contractor/internal/logger"
 	"github.com/BrownBear56/contractor/internal/models"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
-// Storage инкапсулирует мьютекс и хранилище URL-ов.
+type MemoryStore struct {
+	mu          *sync.Mutex
+	URLs        map[string]string
+	reverseURLs map[string]string
+}
+
+func NewMemoryStore() *MemoryStore {
+	return &MemoryStore{
+		mu:          &sync.Mutex{},
+		URLs:        make(map[string]string),
+		reverseURLs: make(map[string]string),
+	}
+}
+
+type FileStore struct {
+	*MemoryStore
+	filePath string
+	logger   logger.Logger
+}
+
 type Storage struct {
 	mu          *sync.Mutex
 	URLs        map[string]string
 	reverseURLs map[string]string
 	filePath    string
+	logger      logger.Logger
 }
 
 // URLShortener хранит базовый URL и объект Storage.
 type URLShortener struct {
 	storage *Storage
 	baseURL string
+	logger  logger.Logger
 }
 
 func generateID() (string, error) {
@@ -96,7 +120,7 @@ func (u *URLShortener) getOrCreateShortURL(originalURL string) (string, bool, er
 	for range maxRetries {
 		generatedID, err := generateID()
 		if err != nil {
-			log.Printf("Error generating ID: %v\n", err)
+			u.logger.Error("Error generating ID: %v\n", zap.Error(err))
 			continue
 		}
 
@@ -126,7 +150,7 @@ func (s *Storage) loadFromFile() error {
 	}
 	defer func() {
 		if err := file.Close(); err != nil {
-			log.Printf("Error closing file: %v\n", err)
+			s.logger.Error("Error closing file: %v\n", zap.Error(err))
 		}
 	}()
 
@@ -134,6 +158,9 @@ func (s *Storage) loadFromFile() error {
 	for {
 		var data map[string]string
 		if err := decoder.Decode(&data); err != nil {
+			if errors.Is(err, io.EOF) {
+				break // Достигнут конец файла, декодирование завершено успешно.
+			}
 			return fmt.Errorf("error decode data from file: %w", err)
 		}
 		if short, ok := data["short_url"]; ok {
@@ -142,17 +169,43 @@ func (s *Storage) loadFromFile() error {
 			s.reverseURLs[short] = original
 		}
 	}
+	return nil
 }
 
-func newStorage(filePath string) *Storage {
+func newStorage(filePath string, parentLogger logger.Logger) *Storage {
+	// Настройки для нового логгера.
+	customEncoderConfig := zapcore.EncoderConfig{
+		TimeKey:       "timestamp",
+		LevelKey:      "severity",
+		NameKey:       "logger",
+		CallerKey:     "caller",
+		MessageKey:    "message",
+		StacktraceKey: "stacktrace",
+		EncodeTime:    zapcore.ISO8601TimeEncoder,
+		EncodeLevel:   zapcore.CapitalLevelEncoder,
+		EncodeCaller:  zapcore.ShortCallerEncoder,
+	}
+
+	storageLogger, err := parentLogger.(*logger.ZapLogger).ReconfigureAndNamed(
+		"Storage",
+		"info",             // Уровень логирования
+		"json",             // Формат логов
+		[]string{"stdout"}, // Вывод логов
+		customEncoderConfig,
+	)
+	if err != nil {
+		log.Fatalf("Failed to reconfigure logger: %v", err)
+	}
+
 	s := &Storage{
 		mu:          &sync.Mutex{},
 		URLs:        make(map[string]string),
 		reverseURLs: make(map[string]string),
 		filePath:    filePath,
+		logger:      storageLogger,
 	}
 	if err := s.loadFromFile(); err != nil { // Загружаем данные при инициализации.
-		log.Printf("error load from file: %v", err)
+		s.logger.Error("Failed to load data from file", zap.Error(err))
 	}
 	return s
 }
@@ -161,11 +214,11 @@ func newStorage(filePath string) *Storage {
 func (s *Storage) saveToFile() error {
 	file, err := os.Create(s.filePath)
 	if err != nil {
-		log.Printf("Error creating file: %v\n", err)
+		s.logger.Error("Error creating file: %v\n", zap.Error(err))
 	}
 	defer func() {
 		if err := file.Close(); err != nil {
-			log.Printf("Error closing file: %v\n", err)
+			s.logger.Error("Error closing file: %v\n", zap.Error(err))
 		}
 	}()
 
@@ -182,10 +235,36 @@ func (s *Storage) saveToFile() error {
 	return nil
 }
 
-func NewURLShortener(baseURL string, fileStoragePath string) *URLShortener {
+func NewURLShortener(
+	baseURL string, fileStoragePath string, parentLogger logger.Logger) *URLShortener {
+	// Настройки для нового логгера.
+	customEncoderConfig := zapcore.EncoderConfig{
+		TimeKey:       "timestamp",
+		LevelKey:      "severity",
+		NameKey:       "logger",
+		CallerKey:     "caller",
+		MessageKey:    "message",
+		StacktraceKey: "stacktrace",
+		EncodeTime:    zapcore.ISO8601TimeEncoder,
+		EncodeLevel:   zapcore.CapitalLevelEncoder,
+		EncodeCaller:  zapcore.ShortCallerEncoder,
+	}
+
+	handlerLogger, err := parentLogger.(*logger.ZapLogger).ReconfigureAndNamed(
+		"Handler",
+		"info",             // Уровень логирования
+		"json",             // Формат логов
+		[]string{"stdout"}, // Вывод логов
+		customEncoderConfig,
+	)
+	if err != nil {
+		log.Fatalf("Failed to reconfigure logger: %v", err)
+	}
+
 	return &URLShortener{
 		baseURL: baseURL,
-		storage: newStorage(fileStoragePath),
+		storage: newStorage(fileStoragePath, parentLogger),
+		logger:  handlerLogger,
 	}
 }
 
@@ -210,7 +289,8 @@ func (u *URLShortener) PostJSONHandler(w http.ResponseWriter, r *http.Request) {
 
 	shortURL, ok, err := u.getOrCreateShortURL(originalURL)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		u.logger.Error("Failed to get or create short URL", zap.String("originalURL", originalURL), zap.Error(err))
+		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
 
@@ -223,7 +303,8 @@ func (u *URLShortener) PostJSONHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, "error encoding response", http.StatusInternalServerError)
+		u.logger.Error("error encoding response", zap.String("shortURL", shortURL), zap.Error(err))
+		http.Error(w, "Invalid request", http.StatusBadRequest)
 	}
 }
 
@@ -242,7 +323,8 @@ func (u *URLShortener) PostHandler(w http.ResponseWriter, r *http.Request) {
 
 	shortURL, ok, err := u.getOrCreateShortURL(originalURL)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		u.logger.Error("Failed to get or create short URL", zap.String("originalURL", originalURL), zap.Error(err))
+		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
 

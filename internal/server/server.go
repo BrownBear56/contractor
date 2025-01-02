@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 
 	"github.com/BrownBear56/contractor/internal/config"
 	"github.com/BrownBear56/contractor/internal/gzip"
@@ -17,31 +18,57 @@ import (
 type Server struct {
 	router *chi.Mux
 	cfg    *config.Config
+	logger logger.Logger
 }
 
-func New(cfg *config.Config) *Server {
+func New(cfg *config.Config, parentLogger logger.Logger) *Server {
+	// Настройки для нового логгера.
+	customEncoderConfig := zapcore.EncoderConfig{
+		TimeKey:       "timestamp",
+		LevelKey:      "severity",
+		NameKey:       "logger",
+		CallerKey:     "caller",
+		MessageKey:    "message",
+		StacktraceKey: "stacktrace",
+		EncodeTime:    zapcore.ISO8601TimeEncoder,
+		EncodeLevel:   zapcore.CapitalLevelEncoder,
+		EncodeCaller:  zapcore.ShortCallerEncoder,
+	}
+
+	serverLogger, err := parentLogger.(*logger.ZapLogger).ReconfigureAndNamed(
+		"Server",
+		"info",             // Уровень логирования
+		"json",             // Формат логов
+		[]string{"stdout"}, // Вывод логов
+		customEncoderConfig,
+	)
+	if err != nil {
+		log.Fatalf("Failed to reconfigure logger: %v", err)
+	}
+
 	s := &Server{
 		router: chi.NewRouter(),
 		cfg:    cfg,
+		logger: serverLogger,
 	}
 
-	if err := logger.Initialize("info"); err != nil {
-		log.Println("Failed logger initialize")
-	}
-
-	logger.Log.Info("Setup routers", zap.String("status", "processing"))
-	s.setupRoutes()
-	logger.Log.Info("Setup routers", zap.String("status", "success"))
+	s.logger.Info("Setup routers", zap.String("status", "processing"))
+	s.setupRoutes(parentLogger)
+	s.logger.Info("Setup routers", zap.String("status", "success"))
 
 	return s
 }
 
-func (s *Server) setupRoutes() {
-	urlShortener := handlers.NewURLShortener(s.cfg.BaseURL, s.cfg.FileStoragePath)
+func (s *Server) setupRoutes(parentLogger logger.Logger) {
+	urlShortener := handlers.NewURLShortener(s.cfg.BaseURL, s.cfg.FileStoragePath, parentLogger)
 
 	// Подключаем middleware.
-	s.router.Use(logger.LoggingMiddleware) // Наше кастомное middleware-логирование.
-	s.router.Use(gzip.GzipMiddleware)      // Наше кастомное middleware-сжатие.
+	s.router.Use(func(next http.Handler) http.Handler {
+		return logger.LoggingMiddleware(next, s.logger)
+	}) // Наше кастомное middleware-логирование.
+	s.router.Use(func(next http.Handler) http.Handler {
+		return gzip.GzipMiddleware(next, s.logger)
+	}) // Наше кастомное middleware-сжатие.
 
 	s.router.Post("/api/shorten", urlShortener.PostJSONHandler)
 	s.router.Post("/", urlShortener.PostHandler)
@@ -59,7 +86,7 @@ func (s *Server) Start() error {
 		return fmt.Errorf("failed to start server on %s: %w", s.cfg.Address, err)
 	}
 
-	logger.Log.Info("Server is running", zap.String("address", s.cfg.Address))
+	s.logger.Info("Server is running", zap.String("address", s.cfg.Address))
 
 	return nil
 }
