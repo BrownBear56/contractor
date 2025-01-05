@@ -42,7 +42,7 @@ func (l *ZapLogger) Named(name string) Logger {
 }
 
 func (l *ZapLogger) ReconfigureAndNamed(name string, level string, encoding string,
-	outputPaths []string, encoderConfig zapcore.EncoderConfig) (Logger, error) {
+	outputPaths []string, encoderConfig *zapcore.EncoderConfig) (Logger, error) {
 	// Преобразуем текстовый уровень логирования в zap.AtomicLevel.
 	lvl, err := zap.ParseAtomicLevel(level)
 	if err != nil {
@@ -54,7 +54,7 @@ func (l *ZapLogger) ReconfigureAndNamed(name string, level string, encoding stri
 		Encoding:      encoding,
 		Level:         lvl,
 		OutputPaths:   outputPaths,
-		EncoderConfig: encoderConfig,
+		EncoderConfig: *encoderConfig,
 	}
 
 	// Строим новый zap.Logger на основе конфигурации.

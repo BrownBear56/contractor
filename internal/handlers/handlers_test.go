@@ -70,7 +70,7 @@ func TestPostJSONHandler(t *testing.T) {
 	testLogger := logger.NewZapLogger(zapLogger)
 
 	// Устанавливаем базовый URL для тестов.
-	urlShortener := NewURLShortener("http://localhost:8080", filePath, testLogger)
+	urlShortener := NewURLShortener("http://localhost:8080", filePath, true, testLogger)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -164,7 +164,7 @@ func TestPostHandler(t *testing.T) {
 	testLogger := logger.NewZapLogger(zapLogger)
 
 	// Устанавливаем базовый URL для тестов.
-	urlShortener := NewURLShortener("http://localhost:8080", filePath, testLogger)
+	urlShortener := NewURLShortener("http://localhost:8080", filePath, true, testLogger)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -212,8 +212,11 @@ func TestGetHandler(t *testing.T) {
 
 	testLogger := logger.NewZapLogger(zapLogger)
 
-	urlShortener := NewURLShortener("http://localhost:8080", "storage.json", testLogger)
-	urlShortener.storage.URLs[testID] = testURL
+	urlShortener := NewURLShortener("http://localhost:8080", "storage.json", true, testLogger)
+	if err := urlShortener.storage.SaveID(testID, testURL); err != nil {
+		t.Errorf("Failed to save url in memory: %v", err)
+		return
+	}
 
 	tests := []struct {
 		name           string
@@ -280,7 +283,7 @@ func TestConcurrentAccess(t *testing.T) {
 
 	testLogger := logger.NewZapLogger(zapLogger)
 
-	urlShortener := NewURLShortener("http://localhost:8080", "storage.json", testLogger)
+	urlShortener := NewURLShortener("http://localhost:8080", "storage.json", true, testLogger)
 
 	var wg sync.WaitGroup
 	const goroutines = 100
@@ -311,7 +314,7 @@ func TestConcurrentAccess(t *testing.T) {
 	wg.Wait()
 
 	// Проверяем, что URL был сохранен только один раз.
-	id, exists := urlShortener.storage.getIDByURL(url)
+	id, exists := urlShortener.storage.GetIDByURL(url)
 	assert.True(t, exists, "expected URL to be saved")
 	assert.NotEmpty(t, id, "expected non-empty ID")
 }

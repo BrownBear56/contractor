@@ -40,7 +40,7 @@ func New(cfg *config.Config, parentLogger logger.Logger) *Server {
 		"info",             // Уровень логирования
 		"json",             // Формат логов
 		[]string{"stdout"}, // Вывод логов
-		customEncoderConfig,
+		&customEncoderConfig,
 	)
 	if err != nil {
 		log.Fatalf("Failed to reconfigure logger: %v", err)
@@ -60,7 +60,8 @@ func New(cfg *config.Config, parentLogger logger.Logger) *Server {
 }
 
 func (s *Server) setupRoutes(parentLogger logger.Logger) {
-	urlShortener := handlers.NewURLShortener(s.cfg.BaseURL, s.cfg.FileStoragePath, parentLogger)
+	const useFile = true
+	urlShortener := handlers.NewURLShortener(s.cfg.BaseURL, s.cfg.FileStoragePath, useFile, parentLogger)
 
 	// Подключаем middleware.
 	s.router.Use(func(next http.Handler) http.Handler {

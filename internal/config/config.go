@@ -34,7 +34,7 @@ func NewConfig(parentLogger logger.Logger) *Config {
 		"info",             // Уровень логирования
 		"json",             // Формат логов
 		[]string{"stdout"}, // Вывод логов
-		customEncoderConfig,
+		&customEncoderConfig,
 	)
 	if err != nil {
 		log.Fatalf("Failed to reconfigure logger: %v", err)
