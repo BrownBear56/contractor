@@ -13,14 +13,14 @@ import (
 )
 
 type FileStore struct {
-	*memory.MemoryStore
-	logger   logger.Logger
-	filePath string
+	memoryStore memory.MemoryStore
+	logger      logger.Logger
+	filePath    string
 }
 
 func NewFileStore(filePath string, parentLogger logger.Logger) *FileStore {
 	fs := &FileStore{
-		MemoryStore: memory.NewMemoryStore(),
+		memoryStore: *memory.NewMemoryStore(),
 		filePath:    filePath,
 		logger:      parentLogger,
 	}
@@ -29,7 +29,7 @@ func NewFileStore(filePath string, parentLogger logger.Logger) *FileStore {
 }
 
 func (fs *FileStore) SaveID(id, originalURL string) error {
-	if err := fs.MemoryStore.SaveID(id, originalURL); err != nil {
+	if err := fs.memoryStore.SaveID(id, originalURL); err != nil {
 		return fmt.Errorf("failed to save ID in memory store: %w", err)
 	}
 	if err := fs.saveToFile(); err != nil {
@@ -37,6 +37,15 @@ func (fs *FileStore) SaveID(id, originalURL string) error {
 	}
 
 	return nil
+}
+
+func (fs *FileStore) Get(id string) (string, bool) {
+	return fs.memoryStore.Get(id)
+}
+
+func (fs *FileStore) GetIDByURL(originalURL string) (string, bool) {
+	// Извлекаем ID по оригинальному URL из памяти
+	return fs.memoryStore.GetIDByURL(originalURL)
 }
 
 func (fs *FileStore) saveToFile() error {
@@ -52,7 +61,7 @@ func (fs *FileStore) saveToFile() error {
 	}()
 
 	encoder := json.NewEncoder(file)
-	for short, original := range fs.URLs {
+	for short, original := range fs.memoryStore.URLs {
 		data := map[string]string{
 			"short_url":    short,
 			"original_url": original,
@@ -88,7 +97,7 @@ func (fs *FileStore) loadFromFile() error {
 			return fmt.Errorf("error decoding JSON: %w", err)
 		}
 
-		if err := fs.MemoryStore.SaveID(data["short_url"], data["original_url"]); err != nil {
+		if err := fs.memoryStore.SaveID(data["short_url"], data["original_url"]); err != nil {
 			return fmt.Errorf("failed to save ID in memory store: %w", err)
 		}
 	}
