@@ -4,16 +4,29 @@ import (
 	"log"
 
 	"github.com/BrownBear56/contractor/internal/config"
+	"github.com/BrownBear56/contractor/internal/logger"
 	"github.com/BrownBear56/contractor/internal/server"
+	"go.uber.org/zap"
 )
 
 func main() {
-	cfg := config.NewConfig()
+	zapLogger, err := zap.NewDevelopment()
+	if err != nil {
+		log.Fatalf("Failed to initialize logger: %v", err)
+	}
+	defer func() {
+		if err := zapLogger.Sync(); err != nil {
+			log.Fatalf("Failed to sync zap logger: %v", err)
+		}
+	}()
 
-	srv := server.New(cfg)
+	appLogger := logger.NewZapLogger(zapLogger)
 
-	log.Printf("Server is running on http://%s\n", cfg.Address)
+	cfg := config.NewConfig(appLogger)
+
+	srv := server.New(cfg, appLogger)
+
 	if err := srv.Start(); err != nil {
-		log.Fatal(err)
+		appLogger.Error("Server failed to start", zap.Error(err))
 	}
 }

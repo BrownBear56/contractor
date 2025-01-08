@@ -3,34 +3,27 @@ package handlers
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
-)
 
-// Storage инкапсулирует мьютекс и хранилище URL-ов.
-type Storage struct {
-	mu       *sync.Mutex
-	urlStore map[string]string
-	reverse  map[string]string
-}
+	"github.com/BrownBear56/contractor/internal/logger"
+	"github.com/BrownBear56/contractor/internal/models"
+	"github.com/BrownBear56/contractor/internal/storage"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+)
 
 // URLShortener хранит базовый URL и объект Storage.
 type URLShortener struct {
-	storage *Storage
+	storage storage.Storage
+	logger  logger.Logger
 	baseURL string
-}
-
-func newStorage() *Storage {
-	return &Storage{
-		mu:       &sync.Mutex{},
-		urlStore: make(map[string]string),
-		reverse:  make(map[string]string),
-	}
 }
 
 func generateID() (string, error) {
@@ -43,89 +36,144 @@ func generateID() (string, error) {
 	return base64.URLEncoding.EncodeToString(bytes), nil
 }
 
-func (s *Storage) saveID(id, originalURL string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// Проверяем, существует ли уже идентификатор.
-	if _, ok := s.urlStore[id]; ok {
-		return fmt.Errorf("ID %s already exists", id)
-	}
-
-	// Сохраняем идентификатор и URL.
-	s.urlStore[id] = originalURL
-	s.reverse[originalURL] = id
-	return nil
-}
-
-func (s *Storage) get(id string) (string, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	originalURL, ok := s.urlStore[id]
-	return originalURL, ok
-}
-
-func (s *Storage) getIDByURL(originalURL string) (string, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	id, ok := s.reverse[originalURL]
-	return id, ok
-}
-
-func NewURLShortener(baseURL string) *URLShortener {
-	return &URLShortener{
-		baseURL: baseURL,
-		storage: newStorage(),
-	}
-}
-
-func (u *URLShortener) PostHandler(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(r.Body)
-	if err != nil || len(strings.TrimSpace(string(body))) == 0 {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-
+func (u *URLShortener) validateAndGetURL(body []byte) (string, error) {
 	originalURL := strings.TrimSpace(string(body))
-
-	// Проверяем валидность URL.
-	if _, err := url.ParseRequestURI(originalURL); err != nil {
-		http.Error(w, "Invalid URL format", http.StatusBadRequest)
-		return
+	if originalURL == "" {
+		return "", errors.New("empty URL")
 	}
+	if _, err := url.ParseRequestURI(originalURL); err != nil {
+		return "", errors.New("invalid URL format")
+	}
+	return originalURL, nil
+}
 
+func (u *URLShortener) getOrCreateShortURL(originalURL string) (string, bool, error) {
 	// Проверяем, существует ли уже такой URL.
-	if existingID, ok := u.storage.getIDByURL(originalURL); ok {
-		shortURL := fmt.Sprintf("%s/%s", u.baseURL, existingID)
-		w.WriteHeader(http.StatusOK) // Идемпотентное поведение: возвращаем 200 OK.
-		w.Header().Set("Content-Type", "text/plain")
-		_, _ = w.Write([]byte(shortURL))
-		return
+	if existingID, ok := u.storage.GetIDByURL(originalURL); ok {
+		return fmt.Sprintf("%s/%s", u.baseURL, existingID), true, nil
 	}
 
 	const maxRetries = 10
 	var id string
 	for range maxRetries {
-		id, err = generateID()
+		generatedID, err := generateID()
 		if err != nil {
-			log.Printf("Error generating ID: %v\n", err)
+			u.logger.Error("Error generating ID: %v\n", zap.Error(err))
 			continue
 		}
 
-		// Попытка сохранить ID.
-		if err := u.storage.saveID(id, originalURL); err == nil {
+		if err := u.storage.SaveID(generatedID, originalURL); err == nil {
+			id = generatedID
 			break
 		}
 	}
 
 	if id == "" {
-		http.Error(w, "Failed to generate unique ID", http.StatusInternalServerError)
+		return "", false, errors.New("all attempts to generate a unique ID failed")
+	}
+
+	return fmt.Sprintf("%s/%s", u.baseURL, id), false, nil
+}
+
+func NewURLShortener(
+	baseURL string, fileStoragePath string, useFile bool, parentLogger logger.Logger) *URLShortener {
+	// Настройки для нового логгера.
+	customEncoderConfig := zapcore.EncoderConfig{
+		TimeKey:       "timestamp",
+		LevelKey:      "severity",
+		NameKey:       "logger",
+		CallerKey:     "caller",
+		MessageKey:    "message",
+		StacktraceKey: "stacktrace",
+		EncodeTime:    zapcore.ISO8601TimeEncoder,
+		EncodeLevel:   zapcore.CapitalLevelEncoder,
+		EncodeCaller:  zapcore.ShortCallerEncoder,
+	}
+
+	handlerLogger, err := parentLogger.(*logger.ZapLogger).ReconfigureAndNamed(
+		"Handler",
+		"info",             // Уровень логирования
+		"json",             // Формат логов
+		[]string{"stdout"}, // Вывод логов
+		&customEncoderConfig,
+	)
+	if err != nil {
+		log.Fatalf("Failed to reconfigure logger: %v", err)
+	}
+
+	return &URLShortener{
+		baseURL: baseURL,
+		storage: storage.NewStorage(fileStoragePath, useFile, parentLogger),
+		logger:  handlerLogger,
+	}
+}
+
+func (u *URLShortener) PostJSONHandler(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	shortURL := fmt.Sprintf("%s/%s", u.baseURL, id)
-	w.WriteHeader(http.StatusCreated)
+	var request models.Request
+	if err := json.Unmarshal(body, &request); err != nil {
+		http.Error(w, "cannot decode request JSON body", http.StatusBadRequest)
+		return
+	}
+
+	originalURL, err := u.validateAndGetURL([]byte(request.URL))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	shortURL, ok, err := u.getOrCreateShortURL(originalURL)
+	if err != nil {
+		u.logger.Error("failed to process URL", zap.String("originalURL", originalURL), zap.Error(err))
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	response := models.Response{Result: shortURL}
+	w.Header().Set("Content-Type", "application/json")
+	if ok {
+		w.WriteHeader(http.StatusOK) // URL уже существует.
+	} else {
+		w.WriteHeader(http.StatusCreated) // Новый URL.
+	}
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		u.logger.Error("error encoding response", zap.String("shortURL", shortURL), zap.Error(err))
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+	}
+}
+
+func (u *URLShortener) PostHandler(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	originalURL, err := u.validateAndGetURL(body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	shortURL, ok, err := u.getOrCreateShortURL(originalURL)
+	if err != nil {
+		u.logger.Error("failed to process URL", zap.String("originalURL", originalURL), zap.Error(err))
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
 	w.Header().Set("Content-Type", "text/plain")
+	if ok {
+		w.WriteHeader(http.StatusOK) // URL уже существует.
+	} else {
+		w.WriteHeader(http.StatusCreated) // Новый URL.
+	}
 	_, _ = w.Write([]byte(shortURL))
 }
 
@@ -136,7 +184,7 @@ func (u *URLShortener) GetHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	originalURL, ok := u.storage.get(id)
+	originalURL, ok := u.storage.Get(id)
 	if !ok {
 		http.Error(w, "ID not found", http.StatusBadRequest)
 		return
