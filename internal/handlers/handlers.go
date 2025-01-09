@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -11,19 +12,22 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/BrownBear56/contractor/internal/logger"
 	"github.com/BrownBear56/contractor/internal/models"
 	"github.com/BrownBear56/contractor/internal/storage"
+	"github.com/jackc/pgx/v4"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
 // URLShortener хранит базовый URL и объект Storage.
 type URLShortener struct {
-	storage storage.Storage
-	logger  logger.Logger
-	baseURL string
+	storage    storage.Storage
+	logger     logger.Logger
+	dbConnPool *pgx.Conn
+	baseURL    string
 }
 
 func generateID() (string, error) {
@@ -76,7 +80,8 @@ func (u *URLShortener) getOrCreateShortURL(originalURL string) (string, bool, er
 }
 
 func NewURLShortener(
-	baseURL string, fileStoragePath string, useFile bool, parentLogger logger.Logger) *URLShortener {
+	baseURL string, fileStoragePath string,
+	dbDSN string, useFile bool, parentLogger logger.Logger) *URLShortener {
 	// Настройки для нового логгера.
 	customEncoderConfig := zapcore.EncoderConfig{
 		TimeKey:       "timestamp",
@@ -101,11 +106,34 @@ func NewURLShortener(
 		log.Fatalf("Failed to reconfigure logger: %v", err)
 	}
 
-	return &URLShortener{
-		baseURL: baseURL,
-		storage: storage.NewStorage(fileStoragePath, useFile, parentLogger),
-		logger:  handlerLogger,
+	var dbConn *pgx.Conn
+	if dbDSN != "" {
+		dbConn, err = pgx.Connect(context.Background(), dbDSN)
+		if err != nil {
+			handlerLogger.Fatal("Failed to connect to the database: %v\n", zap.Error(err))
+		}
 	}
+
+	return &URLShortener{
+		baseURL:    baseURL,
+		storage:    storage.NewStorage(fileStoragePath, useFile, parentLogger),
+		logger:     handlerLogger,
+		dbConnPool: dbConn,
+	}
+}
+
+func (u *URLShortener) PingHandler(w http.ResponseWriter, r *http.Request) {
+	const dbPingTimeout = 2 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), dbPingTimeout)
+	defer cancel()
+
+	if err := u.dbConnPool.Ping(ctx); err != nil {
+		u.logger.Error("Database connection error", zap.Error(err))
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 }
 
 func (u *URLShortener) PostJSONHandler(w http.ResponseWriter, r *http.Request) {

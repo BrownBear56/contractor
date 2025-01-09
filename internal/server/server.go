@@ -61,7 +61,8 @@ func New(cfg *config.Config, parentLogger logger.Logger) *Server {
 
 func (s *Server) setupRoutes(parentLogger logger.Logger) {
 	const useFile = true
-	urlShortener := handlers.NewURLShortener(s.cfg.BaseURL, s.cfg.FileStoragePath, useFile, parentLogger)
+	urlShortener := handlers.NewURLShortener(
+		s.cfg.BaseURL, s.cfg.FileStoragePath, s.cfg.DatabaseDSN, useFile, parentLogger)
 
 	// Подключаем middleware.
 	s.router.Use(func(next http.Handler) http.Handler {
@@ -78,6 +79,7 @@ func (s *Server) setupRoutes(parentLogger logger.Logger) {
 		r.URL.Path = "/" + id
 		urlShortener.GetHandler(w, r)
 	})
+	s.router.Get("/ping", urlShortener.PingHandler)
 }
 
 func (s *Server) Start() error {
