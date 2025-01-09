@@ -73,7 +73,7 @@ func (u *URLShortener) getOrCreateShortURL(originalURL string) (string, bool, er
 	}
 
 	if id == "" {
-		return "", false, errors.New("failed to generate unique ID")
+		return "", false, errors.New("all attempts to generate a unique ID failed")
 	}
 
 	return fmt.Sprintf("%s/%s", u.baseURL, id), false, nil
@@ -147,7 +147,7 @@ func (u *URLShortener) PostJSONHandler(w http.ResponseWriter, r *http.Request) {
 
 	shortURL, ok, err := u.getOrCreateShortURL(originalURL)
 	if err != nil {
-		u.logger.Error("Failed to get or create short URL", zap.String("originalURL", originalURL), zap.Error(err))
+		u.logger.Error("failed to process URL", zap.String("originalURL", originalURL), zap.Error(err))
 		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
@@ -181,7 +181,7 @@ func (u *URLShortener) PostHandler(w http.ResponseWriter, r *http.Request) {
 
 	shortURL, ok, err := u.getOrCreateShortURL(originalURL)
 	if err != nil {
-		u.logger.Error("Failed to get or create short URL", zap.String("originalURL", originalURL), zap.Error(err))
+		u.logger.Error("failed to process URL", zap.String("originalURL", originalURL), zap.Error(err))
 		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
