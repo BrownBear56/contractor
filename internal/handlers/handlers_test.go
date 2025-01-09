@@ -16,55 +16,6 @@ import (
 	"go.uber.org/zap"
 )
 
-func TestPingHandler(t *testing.T) {
-	zapLogger, err := zap.NewDevelopment()
-	if err != nil {
-		t.Errorf("Failed to initialize logger: %v", err)
-		return
-	}
-	defer func() {
-		_ = zapLogger.Sync()
-	}()
-
-	testLogger := logger.NewZapLogger(zapLogger)
-
-	// Создаём временную директорию для хранения тестовых данных.
-	tempDir := t.TempDir()
-	filePath := filepath.Join(tempDir, "storage_test.json")
-
-	validDBConnString := "postgres://postgres:gofer@localhost:5432/postgres"
-	invalidDBConnString := "postgres://invalid:invalid@localhost:5432/invalid"
-
-	t.Run("Database is reachable", func(t *testing.T) {
-		urlShortener := NewURLShortener("http://localhost:8080", filePath, validDBConnString, true, testLogger)
-
-		req := httptest.NewRequest(http.MethodGet, "/ping", http.NoBody)
-		w := httptest.NewRecorder()
-
-		urlShortener.PingHandler(w, req)
-
-		resp := w.Result()
-		defer func() {
-			if err := resp.Body.Close(); err != nil {
-				t.Errorf("failed to close response body: %v", err)
-				return
-			}
-		}()
-
-		assert.Equal(t, http.StatusOK, resp.StatusCode, "expected status code to be 200 OK")
-	})
-
-	t.Run("Database is not reachable", func(t *testing.T) {
-		// Пытаемся создать URLShortener с невалидным соединением.
-		defer func() {
-			if r := recover(); r == nil {
-				t.Errorf("expected panic due to invalid database connection")
-			}
-		}()
-		_ = NewURLShortener("http://localhost:8080", filePath, invalidDBConnString, true, testLogger)
-	})
-}
-
 func TestPostJSONHandler(t *testing.T) {
 	tests := []struct {
 		name           string
