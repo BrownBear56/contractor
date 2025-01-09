@@ -69,7 +69,7 @@ func TestPostJSONHandler(t *testing.T) {
 
 	testLogger := logger.NewZapLogger(zapLogger)
 
-	testDBConnString := "postgres://postgres:gofer@localhost:5432/postgres"
+	testDBConnString := ""
 
 	// Устанавливаем базовый URL для тестов.
 	urlShortener := NewURLShortener("http://localhost:8080", filePath, testDBConnString, true, testLogger)
@@ -165,7 +165,7 @@ func TestPostHandler(t *testing.T) {
 
 	testLogger := logger.NewZapLogger(zapLogger)
 
-	testDBConnString := "postgres://postgres:gofer@localhost:5432/postgres"
+	testDBConnString := ""
 
 	// Устанавливаем базовый URL для тестов.
 	urlShortener := NewURLShortener("http://localhost:8080", filePath, testDBConnString, true, testLogger)
@@ -219,7 +219,7 @@ func TestGetHandler(t *testing.T) {
 	tempDir := t.TempDir()
 	filePath := filepath.Join(tempDir, "storage_test.json")
 
-	testDBConnString := "postgres://postgres:gofer@localhost:5432/postgres"
+	testDBConnString := ""
 
 	urlShortener := NewURLShortener("http://localhost:8080", filePath, testDBConnString, true, testLogger)
 	if err := urlShortener.storage.SaveID(testID, testURL); err != nil {
@@ -295,7 +295,7 @@ func TestConcurrentAccess(t *testing.T) {
 	tempDir := t.TempDir()
 	filePath := filepath.Join(tempDir, "storage_test.json")
 
-	testDBConnString := "postgres://postgres:gofer@localhost:5432/postgres"
+	testDBConnString := ""
 
 	urlShortener := NewURLShortener("http://localhost:8080", filePath, testDBConnString, true, testLogger)
 
