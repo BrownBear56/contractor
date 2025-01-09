@@ -16,6 +16,55 @@ import (
 	"go.uber.org/zap"
 )
 
+func TestPingHandler(t *testing.T) {
+	zapLogger, err := zap.NewDevelopment()
+	if err != nil {
+		t.Errorf("Failed to initialize logger: %v", err)
+		return
+	}
+	defer func() {
+		_ = zapLogger.Sync()
+	}()
+
+	testLogger := logger.NewZapLogger(zapLogger)
+
+	// Создаём временную директорию для хранения тестовых данных.
+	tempDir := t.TempDir()
+	filePath := filepath.Join(tempDir, "storage_test.json")
+
+	validDBConnString := "postgres://postgres:gofer@localhost:5432/postgres"
+	invalidDBConnString := "postgres://invalid:invalid@localhost:5432/invalid"
+
+	t.Run("Database is reachable", func(t *testing.T) {
+		urlShortener := NewURLShortener("http://localhost:8080", filePath, validDBConnString, true, testLogger)
+
+		req := httptest.NewRequest(http.MethodGet, "/ping", http.NoBody)
+		w := httptest.NewRecorder()
+
+		urlShortener.PingHandler(w, req)
+
+		resp := w.Result()
+		defer func() {
+			if err := resp.Body.Close(); err != nil {
+				t.Errorf("failed to close response body: %v", err)
+				return
+			}
+		}()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode, "expected status code to be 200 OK")
+	})
+
+	t.Run("Database is not reachable", func(t *testing.T) {
+		// Пытаемся создать URLShortener с невалидным соединением.
+		defer func() {
+			if r := recover(); r == nil {
+				t.Errorf("expected panic due to invalid database connection")
+			}
+		}()
+		_ = NewURLShortener("http://localhost:8080", filePath, invalidDBConnString, true, testLogger)
+	})
+}
+
 func TestPostJSONHandler(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -69,8 +118,10 @@ func TestPostJSONHandler(t *testing.T) {
 
 	testLogger := logger.NewZapLogger(zapLogger)
 
+	testDBConnString := "postgres://postgres:gofer@localhost:5432/postgres"
+
 	// Устанавливаем базовый URL для тестов.
-	urlShortener := NewURLShortener("http://localhost:8080", filePath, true, testLogger)
+	urlShortener := NewURLShortener("http://localhost:8080", filePath, testDBConnString, true, testLogger)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -163,8 +214,10 @@ func TestPostHandler(t *testing.T) {
 
 	testLogger := logger.NewZapLogger(zapLogger)
 
+	testDBConnString := "postgres://postgres:gofer@localhost:5432/postgres"
+
 	// Устанавливаем базовый URL для тестов.
-	urlShortener := NewURLShortener("http://localhost:8080", filePath, true, testLogger)
+	urlShortener := NewURLShortener("http://localhost:8080", filePath, testDBConnString, true, testLogger)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -212,7 +265,12 @@ func TestGetHandler(t *testing.T) {
 
 	testLogger := logger.NewZapLogger(zapLogger)
 
-	urlShortener := NewURLShortener("http://localhost:8080", "storage.json", true, testLogger)
+	tempDir := t.TempDir()
+	filePath := filepath.Join(tempDir, "storage_test.json")
+
+	testDBConnString := "postgres://postgres:gofer@localhost:5432/postgres"
+
+	urlShortener := NewURLShortener("http://localhost:8080", filePath, testDBConnString, true, testLogger)
 	if err := urlShortener.storage.SaveID(testID, testURL); err != nil {
 		t.Errorf("Failed to save url in memory: %v", err)
 		return
@@ -283,7 +341,12 @@ func TestConcurrentAccess(t *testing.T) {
 
 	testLogger := logger.NewZapLogger(zapLogger)
 
-	urlShortener := NewURLShortener("http://localhost:8080", "storage.json", true, testLogger)
+	tempDir := t.TempDir()
+	filePath := filepath.Join(tempDir, "storage_test.json")
+
+	testDBConnString := "postgres://postgres:gofer@localhost:5432/postgres"
+
+	urlShortener := NewURLShortener("http://localhost:8080", filePath, testDBConnString, true, testLogger)
 
 	var wg sync.WaitGroup
 	const goroutines = 100

@@ -45,7 +45,7 @@ func NewConfig(parentLogger logger.Logger) *Config {
 	addressFlag := flag.String("a", "localhost:8080", "HTTP server address.")
 	baseURLFlag := flag.String("b", "http://localhost:8080", "Base URL for shortened links.")
 	filePathFlag := flag.String("f", "storage.json", "Path to file storage.")
-	databaseDSNFlag := flag.String("d", "", "Database connection string.")
+	databaseDSNFlag := flag.String("d", "postgres://postgres:gofer@localhost:5432/postgres", "Database connection string.")
 
 	flag.Parse()
 
@@ -74,12 +74,6 @@ func NewConfig(parentLogger logger.Logger) *Config {
 	if baseURL == "" {
 		configLogger.Info("Base URL cannot be empty. Using default value.")
 		baseURL = "http://localhost:8080"
-	}
-
-	// Валидация строки подключения к БД
-	if baseURL == "" {
-		configLogger.Info("Connection string cannot be empty. Using default value.")
-		baseURL = ""
 	}
 
 	return &Config{
