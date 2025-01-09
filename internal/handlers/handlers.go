@@ -106,9 +106,12 @@ func NewURLShortener(
 		log.Fatalf("Failed to reconfigure logger: %v", err)
 	}
 
-	dbConn, err := pgx.Connect(context.Background(), dbDSN)
-	if err != nil {
-		handlerLogger.Fatal("Failed to connect to the database: %v\n", zap.Error(err))
+	var dbConn *pgx.Conn
+	if dbDSN != "" {
+		dbConn, err = pgx.Connect(context.Background(), dbDSN)
+		if err != nil {
+			handlerLogger.Fatal("Failed to connect to the database: %v\n", zap.Error(err))
+		}
 	}
 
 	return &URLShortener{
