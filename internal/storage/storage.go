@@ -6,6 +6,7 @@ import (
 	"github.com/BrownBear56/contractor/internal/logger"
 	"github.com/BrownBear56/contractor/internal/storage/file"
 	"github.com/BrownBear56/contractor/internal/storage/memory"
+	"github.com/BrownBear56/contractor/internal/storage/postgres"
 	"go.uber.org/zap/zapcore"
 )
 
@@ -15,7 +16,7 @@ type Storage interface {
 	GetIDByURL(originalURL string) (string, bool)
 }
 
-func NewStorage(filePath string, useFile bool, parentLogger logger.Logger) Storage {
+func NewStorage(filePath string, useFile bool, dbDSN string, parentLogger logger.Logger) Storage {
 	// Настройки для нового логгера.
 	customEncoderConfig := zapcore.EncoderConfig{
 		TimeKey:       "timestamp",
@@ -38,6 +39,14 @@ func NewStorage(filePath string, useFile bool, parentLogger logger.Logger) Stora
 	)
 	if err != nil {
 		log.Fatalf("Failed to reconfigure logger: %v", err)
+	}
+
+	if dbDSN != "" {
+		pgStore, err := postgres.NewPostgresStore(dbDSN, storageLogger)
+		if err != nil {
+			log.Fatalf("Failed to initialize PostgresStore: %v", err)
+		}
+		return pgStore
 	}
 
 	if useFile {

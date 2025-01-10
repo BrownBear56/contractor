@@ -116,7 +116,7 @@ func NewURLShortener(
 
 	return &URLShortener{
 		baseURL:    baseURL,
-		storage:    storage.NewStorage(fileStoragePath, useFile, parentLogger),
+		storage:    storage.NewStorage(fileStoragePath, useFile, dbDSN, parentLogger),
 		logger:     handlerLogger,
 		dbConnPool: dbConn,
 	}
