@@ -72,6 +72,7 @@ func (s *Server) setupRoutes(parentLogger logger.Logger) {
 		return gzip.GzipMiddleware(next, s.logger)
 	}) // Наше кастомное middleware-сжатие.
 
+	s.router.Post("/api/shorten/batch", urlShortener.PostBatchHandler)
 	s.router.Post("/api/shorten", urlShortener.PostJSONHandler)
 	s.router.Post("/", urlShortener.PostHandler)
 	s.router.Get("/{id}", func(w http.ResponseWriter, r *http.Request) {

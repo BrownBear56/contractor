@@ -16,6 +16,113 @@ import (
 	"go.uber.org/zap"
 )
 
+func TestPostBatchHandler(t *testing.T) {
+	tests := []struct {
+		name              string
+		body              string
+		expectedStatus    int
+		expectedResponses []models.BatchResponse
+	}{
+		{
+			name: "Valid batch request",
+			body: `[
+                {"correlation_id": "1", "original_url": "http://example.com/1"},
+                {"correlation_id": "2", "original_url": "http://example.com/2"}
+            ]`,
+			expectedStatus: http.StatusCreated,
+			expectedResponses: []models.BatchResponse{
+				{CorrelationID: "1"},
+				{CorrelationID: "2"},
+			},
+		},
+		{
+			name:           "Empty batch request",
+			body:           `[]`,
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "Invalid JSON",
+			body:           `{invalid}`,
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name: "Duplicate URLs in batch",
+			body: `[
+                {"correlation_id": "1", "original_url": "http://example.com/duplicate"},
+                {"correlation_id": "2", "original_url": "http://example.com/duplicate"}
+            ]`,
+			expectedStatus: http.StatusCreated,
+			expectedResponses: []models.BatchResponse{
+				{CorrelationID: "1"},
+				{CorrelationID: "2"},
+			},
+		},
+		{
+			name: "Invalid URL in batch",
+			body: `[
+                {"correlation_id": "1", "original_url": "invalid-url"}
+            ]`,
+			expectedStatus: http.StatusBadRequest,
+		},
+	}
+
+	tempDir := t.TempDir()
+	filePath := filepath.Join(tempDir, "storage_test.json")
+	zapLogger, err := zap.NewDevelopment()
+	if err != nil {
+		t.Errorf("Failed to initialize logger: %v", err)
+		return
+	}
+	defer func() {
+		_ = zapLogger.Sync()
+	}()
+
+	testLogger := logger.NewZapLogger(zapLogger)
+
+	testDBConnString := ""
+
+	urlShortener := NewURLShortener("http://localhost:8080", filePath, testDBConnString, true, testLogger)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			urlShortener.PostBatchHandler(w, req)
+
+			resp := w.Result()
+			defer func() {
+				if err := resp.Body.Close(); err != nil {
+					t.Errorf("failed to close response body: %v", err)
+					return
+				}
+			}()
+
+			assert.Equal(t, tt.expectedStatus, resp.StatusCode, "unexpected status code")
+
+			if tt.expectedStatus == http.StatusCreated {
+				bodyBytes, err := io.ReadAll(resp.Body)
+				assert.NoError(t, err, "failed to read response body")
+
+				var actualResponses []models.BatchResponse
+				err = json.Unmarshal(bodyBytes, &actualResponses)
+				assert.NoError(t, err, "failed to decode response JSON")
+
+				// Проверяем количество ответов
+				assert.Equal(t, len(tt.expectedResponses), len(actualResponses), "unexpected response count")
+
+				// Проверяем соответствие CorrelationID и общий формат ShortURL
+				for i, expected := range tt.expectedResponses {
+					actual := actualResponses[i]
+					assert.Equal(t, expected.CorrelationID, actual.CorrelationID, "unexpected CorrelationID")
+					assert.Contains(t, actual.ShortURL, "http://localhost:8080/", "unexpected ShortURL format")
+				}
+			}
+		})
+	}
+}
+
 func TestPostJSONHandler(t *testing.T) {
 	tests := []struct {
 		name           string
