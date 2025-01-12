@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -11,19 +12,28 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/BrownBear56/contractor/internal/logger"
 	"github.com/BrownBear56/contractor/internal/models"
 	"github.com/BrownBear56/contractor/internal/storage"
+	"github.com/jackc/pgx/v4"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
+const (
+	ErrInvalidRequest      = "Invalid request"
+	ErrInvalidRequestBody  = "Invalid request body"
+	ErrInternalServerError = "Internal Server Error"
+)
+
 // URLShortener хранит базовый URL и объект Storage.
 type URLShortener struct {
-	storage storage.Storage
-	logger  logger.Logger
-	baseURL string
+	storage    storage.Storage
+	logger     logger.Logger
+	dbConnPool *pgx.Conn
+	baseURL    string
 }
 
 func generateID() (string, error) {
@@ -76,7 +86,8 @@ func (u *URLShortener) getOrCreateShortURL(originalURL string) (string, bool, er
 }
 
 func NewURLShortener(
-	baseURL string, fileStoragePath string, useFile bool, parentLogger logger.Logger) *URLShortener {
+	baseURL string, fileStoragePath string,
+	dbDSN string, useFile bool, parentLogger logger.Logger) *URLShortener {
 	// Настройки для нового логгера.
 	customEncoderConfig := zapcore.EncoderConfig{
 		TimeKey:       "timestamp",
@@ -101,17 +112,88 @@ func NewURLShortener(
 		log.Fatalf("Failed to reconfigure logger: %v", err)
 	}
 
-	return &URLShortener{
-		baseURL: baseURL,
-		storage: storage.NewStorage(fileStoragePath, useFile, parentLogger),
-		logger:  handlerLogger,
+	var dbConn *pgx.Conn
+	if dbDSN != "" {
+		dbConn, err = pgx.Connect(context.Background(), dbDSN)
+		if err != nil {
+			handlerLogger.Fatal("Failed to connect to the database: %v\n", zap.Error(err))
+		}
 	}
+
+	return &URLShortener{
+		baseURL:    baseURL,
+		storage:    storage.NewStorage(fileStoragePath, useFile, dbDSN, parentLogger),
+		logger:     handlerLogger,
+		dbConnPool: dbConn,
+	}
+}
+
+func (u *URLShortener) PingHandler(w http.ResponseWriter, r *http.Request) {
+	const dbPingTimeout = 2 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), dbPingTimeout)
+	defer cancel()
+
+	if err := u.dbConnPool.Ping(ctx); err != nil {
+		u.logger.Error("Database connection error", zap.Error(err))
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func (u *URLShortener) PostBatchHandler(w http.ResponseWriter, r *http.Request) {
+	var requests []models.BatchRequest
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, ErrInvalidRequestBody, http.StatusBadRequest)
+		return
+	}
+
+	if err := json.Unmarshal(body, &requests); err != nil || len(requests) == 0 {
+		http.Error(w, "Invalid or empty batch", http.StatusBadRequest)
+		return
+	}
+
+	// Подготовка данных для сохранения
+	batchResults := make([]models.BatchResponse, 0, len(requests))
+	processedURLs := make(map[string]struct{}) // для предотвращения повторной обработки одного URL
+
+	for _, req := range requests {
+		originalURL, err := u.validateAndGetURL([]byte(req.OriginalURL))
+		if err != nil {
+			http.Error(
+				w, fmt.Sprintf("Invalid URL in batch: %s. Correlation ID: %s. Error: %v", req.OriginalURL, req.CorrelationID, err),
+				http.StatusBadRequest)
+			return
+		}
+
+		shortURL, _, err := u.getOrCreateShortURL(originalURL)
+		if err != nil {
+			u.logger.Error("failed to process URL", zap.String("originalURL", originalURL), zap.Error(err))
+			http.Error(w, ErrInvalidRequest, http.StatusBadRequest)
+			return
+		}
+
+		// Помечаем URL как обработанный
+		processedURLs[originalURL] = struct{}{}
+
+		// Формируем результат
+		batchResults = append(batchResults, models.BatchResponse{
+			CorrelationID: req.CorrelationID, // Оригинальный correlationID
+			ShortURL:      shortURL,          // Сформированный короткий URL
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(batchResults)
 }
 
 func (u *URLShortener) PostJSONHandler(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		http.Error(w, ErrInvalidRequestBody, http.StatusBadRequest)
 		return
 	}
 
@@ -130,7 +212,7 @@ func (u *URLShortener) PostJSONHandler(w http.ResponseWriter, r *http.Request) {
 	shortURL, ok, err := u.getOrCreateShortURL(originalURL)
 	if err != nil {
 		u.logger.Error("failed to process URL", zap.String("originalURL", originalURL), zap.Error(err))
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+		http.Error(w, ErrInvalidRequest, http.StatusBadRequest)
 		return
 	}
 
@@ -144,14 +226,14 @@ func (u *URLShortener) PostJSONHandler(w http.ResponseWriter, r *http.Request) {
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		u.logger.Error("error encoding response", zap.String("shortURL", shortURL), zap.Error(err))
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+		http.Error(w, ErrInvalidRequest, http.StatusBadRequest)
 	}
 }
 
 func (u *URLShortener) PostHandler(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		http.Error(w, ErrInvalidRequestBody, http.StatusBadRequest)
 		return
 	}
 
@@ -164,7 +246,7 @@ func (u *URLShortener) PostHandler(w http.ResponseWriter, r *http.Request) {
 	shortURL, ok, err := u.getOrCreateShortURL(originalURL)
 	if err != nil {
 		u.logger.Error("failed to process URL", zap.String("originalURL", originalURL), zap.Error(err))
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+		http.Error(w, ErrInvalidRequest, http.StatusBadRequest)
 		return
 	}
 
