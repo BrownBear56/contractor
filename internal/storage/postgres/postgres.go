@@ -38,7 +38,7 @@ func (p *PostgresStore) createSchema() error {
 	CREATE TABLE IF NOT EXISTS urls (
 		id SERIAL PRIMARY KEY,
 		short_id TEXT UNIQUE NOT NULL,
-		original_url TEXT NOT NULL
+		original_url TEXT UNIQUE NOT NULL
 	);
 	`
 	if _, err := p.conn.Exec(context.Background(), query); err != nil {

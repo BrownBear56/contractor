@@ -157,7 +157,6 @@ func (u *URLShortener) PostBatchHandler(w http.ResponseWriter, r *http.Request) 
 
 	// Подготовка данных для сохранения
 	batchResults := make([]models.BatchResponse, 0, len(requests))
-	processedURLs := make(map[string]struct{}) // для предотвращения повторной обработки одного URL
 
 	for _, req := range requests {
 		originalURL, err := u.validateAndGetURL([]byte(req.OriginalURL))
@@ -174,9 +173,6 @@ func (u *URLShortener) PostBatchHandler(w http.ResponseWriter, r *http.Request) 
 			http.Error(w, ErrInvalidRequest, http.StatusBadRequest)
 			return
 		}
-
-		// Помечаем URL как обработанный
-		processedURLs[originalURL] = struct{}{}
 
 		// Формируем результат
 		batchResults = append(batchResults, models.BatchResponse{
@@ -219,7 +215,7 @@ func (u *URLShortener) PostJSONHandler(w http.ResponseWriter, r *http.Request) {
 	response := models.Response{Result: shortURL}
 	w.Header().Set("Content-Type", "application/json")
 	if ok {
-		w.WriteHeader(http.StatusOK) // URL уже существует.
+		w.WriteHeader(http.StatusConflict) // URL уже существует.
 	} else {
 		w.WriteHeader(http.StatusCreated) // Новый URL.
 	}
@@ -252,7 +248,7 @@ func (u *URLShortener) PostHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/plain")
 	if ok {
-		w.WriteHeader(http.StatusOK) // URL уже существует.
+		w.WriteHeader(http.StatusConflict) // URL уже существует.
 	} else {
 		w.WriteHeader(http.StatusCreated) // Новый URL.
 	}

@@ -151,7 +151,7 @@ func TestPostJSONHandler(t *testing.T) {
 		{
 			name:           "Duplicate URL",
 			body:           `{"url": "http://example.com"}`,
-			expectedStatus: http.StatusOK,
+			expectedStatus: http.StatusConflict,
 			expectedPrefix: "http://localhost:8080/",
 		},
 		{
@@ -247,7 +247,7 @@ func TestPostHandler(t *testing.T) {
 		{
 			name:           "Duplicate URL",
 			body:           "http://example.com",
-			expectedStatus: http.StatusOK,
+			expectedStatus: http.StatusConflict,
 			expectedPrefix: "http://localhost:8080/",
 		},
 		{
