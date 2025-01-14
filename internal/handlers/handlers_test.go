@@ -429,7 +429,7 @@ func TestConcurrentAccess(t *testing.T) {
 			}()
 
 			// Статус может быть 201 или 200.
-			assert.True(t, resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusOK)
+			assert.True(t, resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusConflict)
 		}()
 	}
 	wg.Wait()
