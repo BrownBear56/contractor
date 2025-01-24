@@ -51,6 +51,23 @@ func (fs *FileStore) GetIDByURL(originalURL string) (string, bool) {
 	return fs.memoryStore.GetIDByURL(originalURL)
 }
 
+func (fs *FileStore) SaveBatch(pairs map[string]string) error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+
+	for id, originalURL := range pairs {
+		if err := fs.memoryStore.SaveID(id, originalURL); err != nil {
+			return fmt.Errorf("failed to save ID in memory store: %w", err)
+		}
+	}
+
+	if err := fs.appendBatchToFile(pairs); err != nil {
+		return fmt.Errorf("failed to save batch to file: %w", err)
+	}
+
+	return nil
+}
+
 func (fs *FileStore) appendToFile(id, originalURL string) error {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
@@ -112,6 +129,31 @@ func (fs *FileStore) loadFromFile() error {
 
 		if err := fs.memoryStore.SaveID(data["short_url"], data["original_url"]); err != nil {
 			return fmt.Errorf("failed to save ID in memory store: %w", err)
+		}
+	}
+	return nil
+}
+
+func (fs *FileStore) appendBatchToFile(pairs map[string]string) error {
+	const permLvl = 0o600
+	file, err := os.OpenFile(fs.filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, permLvl)
+	if err != nil {
+		return fmt.Errorf("failed to open file: %w", err)
+	}
+	defer func() {
+		if err := file.Close(); err != nil {
+			fs.logger.Error("Error closing file: %v\n", zap.Error(err))
+		}
+	}()
+
+	encoder := json.NewEncoder(file)
+	for id, originalURL := range pairs {
+		data := map[string]string{
+			"short_url":    id,
+			"original_url": originalURL,
+		}
+		if err := encoder.Encode(data); err != nil {
+			return fmt.Errorf("failed to encode data: %w", err)
 		}
 	}
 	return nil

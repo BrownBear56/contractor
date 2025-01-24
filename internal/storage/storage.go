@@ -14,6 +14,7 @@ type Storage interface {
 	SaveID(id, originalURL string) error
 	Get(id string) (string, bool)
 	GetIDByURL(originalURL string) (string, bool)
+	SaveBatch(pairs map[string]string) error
 }
 
 func NewStorage(filePath string, useFile bool, dbDSN string, parentLogger logger.Logger) Storage {

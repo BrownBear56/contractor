@@ -45,3 +45,17 @@ func (s *MemoryStore) GetIDByURL(originalURL string) (string, bool) {
 	id, ok := s.reverseURLs[originalURL]
 	return id, ok
 }
+
+func (s *MemoryStore) SaveBatch(pairs map[string]string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for id, originalURL := range pairs {
+		if _, ok := s.URLs[id]; ok {
+			return fmt.Errorf("ID %s already exists", id)
+		}
+		s.URLs[id] = originalURL
+		s.reverseURLs[originalURL] = id
+	}
+	return nil
+}

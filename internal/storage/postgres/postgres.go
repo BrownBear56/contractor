@@ -6,7 +6,8 @@ import (
 	"fmt"
 
 	"github.com/BrownBear56/contractor/internal/logger"
-	"github.com/jackc/pgx/v4/pgxpool"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
 
@@ -16,10 +17,17 @@ type PostgresStore struct {
 }
 
 func NewPostgresStore(dsn string, parentLogger logger.Logger) (*PostgresStore, error) {
-	pool, err := pgxpool.Connect(context.Background(), dsn)
+	config, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse database DSN: %w", err)
+	}
+
+	pool, err := pgxpool.New(context.Background(), config.ConnString())
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to PostgreSQL: %w", err)
 	}
+
+	pool.Config().MaxConns = 10
 
 	store := &PostgresStore{
 		conn:   pool,
@@ -36,9 +44,9 @@ func NewPostgresStore(dsn string, parentLogger logger.Logger) (*PostgresStore, e
 func (p *PostgresStore) createSchema() error {
 	query := `
 	CREATE TABLE IF NOT EXISTS urls (
-		id SERIAL PRIMARY KEY,
-		short_id TEXT UNIQUE NOT NULL,
-		original_url TEXT UNIQUE NOT NULL
+		id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+		short_id VARCHAR(12) UNIQUE NOT NULL,
+		original_url VARCHAR(255) UNIQUE NOT NULL
 	);
 	`
 	if _, err := p.conn.Exec(context.Background(), query); err != nil {
@@ -88,6 +96,37 @@ func (p *PostgresStore) GetIDByURL(originalURL string) (string, bool) {
 		return "", false
 	}
 	return id, true
+}
+
+func (p *PostgresStore) SaveBatch(pairs map[string]string) error {
+	ctx := context.Background()
+	tx, err := p.conn.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() {
+		if err := tx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+			p.logger.Error("Failed to rollback transaction: %v\n", zap.Error(err))
+		}
+	}()
+
+	batch := &pgx.Batch{}
+	for id, originalURL := range pairs {
+		batch.Queue(`INSERT INTO urls (short_id, original_url) VALUES ($1, $2) ON CONFLICT DO NOTHING`, id, originalURL)
+	}
+
+	err = tx.SendBatch(ctx, batch).Close()
+	if err != nil {
+		p.logger.Error("SendBatch error: %v\n", zap.Error(err))
+		return fmt.Errorf("send batch error: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		p.logger.Error("Failed to commit transaction", zap.Error(err))
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
 }
 
 func (p *PostgresStore) Close() {
