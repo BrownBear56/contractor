@@ -13,6 +13,7 @@ type Config struct {
 	Address         string
 	BaseURL         string
 	FileStoragePath string
+	DatabaseDSN     string
 }
 
 func NewConfig(parentLogger logger.Logger) *Config {
@@ -44,6 +45,7 @@ func NewConfig(parentLogger logger.Logger) *Config {
 	addressFlag := flag.String("a", "localhost:8080", "HTTP server address.")
 	baseURLFlag := flag.String("b", "http://localhost:8080", "Base URL for shortened links.")
 	filePathFlag := flag.String("f", "storage.json", "Path to file storage.")
+	databaseDSNFlag := flag.String("d", "", "Database connection string.")
 
 	flag.Parse()
 
@@ -63,6 +65,11 @@ func NewConfig(parentLogger logger.Logger) *Config {
 		fileStoragePath = envFilePath
 	}
 
+	databaseDSN := *databaseDSNFlag
+	if envDSN, ok := os.LookupEnv("DATABASE_DSN"); ok {
+		databaseDSN = envDSN
+	}
+
 	// Валидация базового URL.
 	if baseURL == "" {
 		configLogger.Info("Base URL cannot be empty. Using default value.")
@@ -73,5 +80,6 @@ func NewConfig(parentLogger logger.Logger) *Config {
 		Address:         address,
 		BaseURL:         baseURL,
 		FileStoragePath: fileStoragePath,
+		DatabaseDSN:     databaseDSN,
 	}
 }

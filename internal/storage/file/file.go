@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 
 	"github.com/BrownBear56/contractor/internal/logger"
 	"github.com/BrownBear56/contractor/internal/storage/memory"
@@ -13,6 +14,7 @@ import (
 )
 
 type FileStore struct {
+	mu          *sync.Mutex
 	memoryStore memory.MemoryStore
 	logger      logger.Logger
 	filePath    string
@@ -20,6 +22,7 @@ type FileStore struct {
 
 func NewFileStore(filePath string, parentLogger logger.Logger) *FileStore {
 	fs := &FileStore{
+		mu:          &sync.Mutex{},
 		memoryStore: *memory.NewMemoryStore(),
 		filePath:    filePath,
 		logger:      parentLogger,
@@ -32,7 +35,7 @@ func (fs *FileStore) SaveID(id, originalURL string) error {
 	if err := fs.memoryStore.SaveID(id, originalURL); err != nil {
 		return fmt.Errorf("failed to save ID in memory store: %w", err)
 	}
-	if err := fs.saveToFile(); err != nil {
+	if err := fs.appendToFile(id, originalURL); err != nil {
 		return fmt.Errorf("failed to save data to file: %w", err)
 	}
 
@@ -48,11 +51,33 @@ func (fs *FileStore) GetIDByURL(originalURL string) (string, bool) {
 	return fs.memoryStore.GetIDByURL(originalURL)
 }
 
-func (fs *FileStore) saveToFile() error {
-	file, err := os.Create(fs.filePath)
+func (fs *FileStore) SaveBatch(pairs map[string]string) error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+
+	for id, originalURL := range pairs {
+		if err := fs.memoryStore.SaveID(id, originalURL); err != nil {
+			return fmt.Errorf("failed to save ID in memory store: %w", err)
+		}
+	}
+
+	if err := fs.appendBatchToFile(pairs); err != nil {
+		return fmt.Errorf("failed to save batch to file: %w", err)
+	}
+
+	return nil
+}
+
+func (fs *FileStore) appendToFile(id, originalURL string) error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+
+	// Открываем файл в режиме добавления, если его нет, создаем.
+	const permLvl = 0o600
+	file, err := os.OpenFile(fs.filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, permLvl)
 	if err != nil {
-		fs.logger.Error("Error creating file: %v\n", zap.Error(err))
-		return fmt.Errorf("failed to create file %s: %w", fs.filePath, err)
+		fs.logger.Error("Error opening file: %v\n", zap.Error(err))
+		return fmt.Errorf("failed to open file %s: %w", fs.filePath, err)
 	}
 	defer func() {
 		if err := file.Close(); err != nil {
@@ -60,20 +85,25 @@ func (fs *FileStore) saveToFile() error {
 		}
 	}()
 
-	encoder := json.NewEncoder(file)
-	for short, original := range fs.memoryStore.URLs {
-		data := map[string]string{
-			"short_url":    short,
-			"original_url": original,
-		}
-		if err := encoder.Encode(data); err != nil {
-			return fmt.Errorf("error encoding JSON: %w", err)
-		}
+	// Подготавливаем данные для записи.
+	data := map[string]string{
+		"short_url":    id,
+		"original_url": originalURL,
 	}
+
+	// Кодируем данные в JSON и записываем их в файл.
+	encoder := json.NewEncoder(file)
+	if err := encoder.Encode(data); err != nil {
+		return fmt.Errorf("error encoding JSON: %w", err)
+	}
+
 	return nil
 }
 
 func (fs *FileStore) loadFromFile() error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+
 	file, err := os.Open(fs.filePath)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -99,6 +129,31 @@ func (fs *FileStore) loadFromFile() error {
 
 		if err := fs.memoryStore.SaveID(data["short_url"], data["original_url"]); err != nil {
 			return fmt.Errorf("failed to save ID in memory store: %w", err)
+		}
+	}
+	return nil
+}
+
+func (fs *FileStore) appendBatchToFile(pairs map[string]string) error {
+	const permLvl = 0o600
+	file, err := os.OpenFile(fs.filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, permLvl)
+	if err != nil {
+		return fmt.Errorf("failed to open file: %w", err)
+	}
+	defer func() {
+		if err := file.Close(); err != nil {
+			fs.logger.Error("Error closing file: %v\n", zap.Error(err))
+		}
+	}()
+
+	encoder := json.NewEncoder(file)
+	for id, originalURL := range pairs {
+		data := map[string]string{
+			"short_url":    id,
+			"original_url": originalURL,
+		}
+		if err := encoder.Encode(data); err != nil {
+			return fmt.Errorf("failed to encode data: %w", err)
 		}
 	}
 	return nil

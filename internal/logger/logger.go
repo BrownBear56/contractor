@@ -12,6 +12,7 @@ import (
 type Logger interface {
 	Info(msg string, fields ...zap.Field)
 	Error(msg string, fields ...zap.Field)
+	Fatal(msg string, fields ...zap.Field)
 	Named(name string) Logger
 }
 
@@ -33,6 +34,11 @@ func (l *ZapLogger) Info(msg string, fields ...zap.Field) {
 // Error логирует сообщение уровня ERROR.
 func (l *ZapLogger) Error(msg string, fields ...zap.Field) {
 	l.logger.Error(msg, fields...)
+}
+
+// Fatal логирует сообщение уровня FATAL.
+func (l *ZapLogger) Fatal(msg string, fields ...zap.Field) {
+	l.logger.Fatal(msg, fields...)
 }
 
 // Named добавляет новый сегмент пути к имени регистратора.
