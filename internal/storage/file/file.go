@@ -31,11 +31,11 @@ func NewFileStore(filePath string, parentLogger logger.Logger) *FileStore {
 	return fs
 }
 
-func (fs *FileStore) SaveID(id, originalURL string) error {
-	if err := fs.memoryStore.SaveID(id, originalURL); err != nil {
+func (fs *FileStore) SaveID(userID, id, originalURL string) error {
+	if err := fs.memoryStore.SaveID(userID, id, originalURL); err != nil {
 		return fmt.Errorf("failed to save ID in memory store: %w", err)
 	}
-	if err := fs.appendToFile(id, originalURL); err != nil {
+	if err := fs.appendToFile(userID, id, originalURL); err != nil {
 		return fmt.Errorf("failed to save data to file: %w", err)
 	}
 
@@ -51,12 +51,16 @@ func (fs *FileStore) GetIDByURL(originalURL string) (string, bool) {
 	return fs.memoryStore.GetIDByURL(originalURL)
 }
 
-func (fs *FileStore) SaveBatch(pairs map[string]string) error {
+func (fs *FileStore) GetUserURLs(userID string) (map[string]string, bool) {
+	return fs.memoryStore.GetUserURLs(userID)
+}
+
+func (fs *FileStore) SaveBatch(userID string, pairs map[string]string) error {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 
 	for id, originalURL := range pairs {
-		if err := fs.memoryStore.SaveID(id, originalURL); err != nil {
+		if err := fs.memoryStore.SaveID(userID, id, originalURL); err != nil {
 			return fmt.Errorf("failed to save ID in memory store: %w", err)
 		}
 	}
@@ -68,7 +72,7 @@ func (fs *FileStore) SaveBatch(pairs map[string]string) error {
 	return nil
 }
 
-func (fs *FileStore) appendToFile(id, originalURL string) error {
+func (fs *FileStore) appendToFile(userID, id, originalURL string) error {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 
@@ -87,6 +91,7 @@ func (fs *FileStore) appendToFile(id, originalURL string) error {
 
 	// Подготавливаем данные для записи.
 	data := map[string]string{
+		"user_id":      userID,
 		"short_url":    id,
 		"original_url": originalURL,
 	}
@@ -127,7 +132,7 @@ func (fs *FileStore) loadFromFile() error {
 			return fmt.Errorf("error decoding JSON: %w", err)
 		}
 
-		if err := fs.memoryStore.SaveID(data["short_url"], data["original_url"]); err != nil {
+		if err := fs.memoryStore.SaveID(data["user_id"], data["short_url"], data["original_url"]); err != nil {
 			return fmt.Errorf("failed to save ID in memory store: %w", err)
 		}
 	}
