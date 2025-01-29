@@ -110,27 +110,48 @@ func AuthMiddleware(secretKey []byte) func(http.Handler) http.Handler {
 			const cookieName = "user_id"
 			cookie, err := r.Cookie(cookieName)
 
-			var userID string
-			if err == nil {
-				// Проверяем подпись куки.
-				userID, err = VerifyCookie(cookie.Value, secretKey)
-				if err != nil {
-					userID = ""
+			// Для маршрута /api/user/urls просто проверяем куку и не генерируем новую
+			if r.URL.Path == "/api/user/urls" {
+				if err != nil || cookie.Value == "" {
+					http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+					return
 				}
+
+				userID, err := VerifyCookie(cookie.Value, secretKey)
+				if err != nil || userID == "" {
+					http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+					return
+				}
+
+				// Передаем userID в контексте запроса
+				ctx := context.WithValue(r.Context(), handlers.UserIDKey, userID)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
 			}
 
-			if userID == "" {
-				// Генерируем новый userID и подписываем его.
-				userID = generateNewUserID()
+			// Для других маршрутов генерируем новый userID, если cookie отсутствует
+			if err != nil || cookie.Value == "" {
+				userID := generateNewUserID()
 				signedCookie := SignCookie(userID, secretKey)
 				http.SetCookie(w, &http.Cookie{
 					Name:  cookieName,
 					Value: signedCookie,
 					Path:  "/",
 				})
+
+				// Передаем новый userID в контексте запроса
+				ctx := context.WithValue(r.Context(), handlers.UserIDKey, userID)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
 			}
 
-			// Передаём userID в контексте запроса.
+			userID, err := VerifyCookie(cookie.Value, secretKey)
+			if err != nil || userID == "" {
+				http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+				return
+			}
+
+			// Передаем userID в контексте запроса
 			ctx := context.WithValue(r.Context(), handlers.UserIDKey, userID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
