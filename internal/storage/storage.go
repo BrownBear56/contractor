@@ -11,10 +11,11 @@ import (
 )
 
 type Storage interface {
-	SaveID(id, originalURL string) error
+	SaveID(userID, id, originalURL string) error
 	Get(id string) (string, bool)
 	GetIDByURL(originalURL string) (string, bool)
-	SaveBatch(pairs map[string]string) error
+	SaveBatch(userID string, pairs map[string]string) error
+	GetUserURLs(userID string) (map[string]string, bool) // Новый метод
 }
 
 func NewStorage(filePath string, useFile bool, dbDSN string, parentLogger logger.Logger) Storage {

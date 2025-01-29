@@ -1,11 +1,18 @@
 package server
 
 import (
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
@@ -71,6 +78,7 @@ func (s *Server) setupRoutes(parentLogger logger.Logger) {
 	s.router.Use(func(next http.Handler) http.Handler {
 		return gzip.GzipMiddleware(next, s.logger)
 	}) // Наше кастомное middleware-сжатие.
+	s.router.Use(AuthMiddleware([]byte(s.cfg.SecretKey)))
 
 	s.router.Post("/api/shorten/batch", urlShortener.PostBatchHandler)
 	s.router.Post("/api/shorten", urlShortener.PostJSONHandler)
@@ -81,6 +89,7 @@ func (s *Server) setupRoutes(parentLogger logger.Logger) {
 		urlShortener.GetHandler(w, r)
 	})
 	s.router.Get("/ping", urlShortener.PingHandler)
+	s.router.Get("/api/user/urls", urlShortener.GetUserURLsHandler)
 }
 
 func (s *Server) Start() error {
@@ -93,4 +102,72 @@ func (s *Server) Start() error {
 	s.logger.Info("Server is running", zap.String("address", s.cfg.Address))
 
 	return nil
+}
+
+func AuthMiddleware(secretKey []byte) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			const cookieName = "user_id"
+			cookie, err := r.Cookie(cookieName)
+
+			var userID string
+			if err == nil {
+				// Проверяем подпись куки.
+				userID, err = VerifyCookie(cookie.Value, secretKey)
+				if err != nil {
+					userID = ""
+				}
+			}
+
+			if userID == "" {
+				// Генерируем новый userID и подписываем его.
+				userID = generateNewUserID()
+				signedCookie := SignCookie(userID, secretKey)
+				http.SetCookie(w, &http.Cookie{
+					Name:  cookieName,
+					Value: signedCookie,
+					Path:  "/",
+				})
+			}
+
+			// Передаём userID в контексте запроса.
+			ctx := context.WithValue(r.Context(), handlers.UserIDKey, userID)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+func SignCookie(userID string, secretKey []byte) string {
+	h := hmac.New(sha256.New, secretKey)
+	h.Write([]byte(userID))
+	signature := base64.URLEncoding.EncodeToString(h.Sum(nil))
+	return fmt.Sprintf("%s.%s", userID, signature)
+}
+
+func VerifyCookie(cookieValue string, secretKey []byte) (string, error) {
+	const cookiePartsCount = 2
+	parts := strings.Split(cookieValue, ".")
+	if len(parts) != cookiePartsCount {
+		return "", errors.New("invalid cookie format")
+	}
+
+	userID := parts[0]
+	signature, err := base64.URLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return "", fmt.Errorf("failed to decode base64 signature: %w", err)
+	}
+
+	h := hmac.New(sha256.New, secretKey)
+	h.Write([]byte(userID))
+	expectedSignature := h.Sum(nil)
+
+	if !hmac.Equal(signature, expectedSignature) {
+		return "", errors.New("invalid cookie signature")
+	}
+
+	return userID, nil
+}
+
+func generateNewUserID() string {
+	return uuid.New().String()
 }
