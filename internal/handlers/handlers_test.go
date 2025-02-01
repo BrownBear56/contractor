@@ -14,6 +14,7 @@ import (
 
 	"github.com/BrownBear56/contractor/internal/logger"
 	"github.com/BrownBear56/contractor/internal/models"
+	"github.com/BrownBear56/contractor/internal/storage"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
 )
@@ -81,10 +82,10 @@ func TestPostBatchHandler(t *testing.T) {
 	}()
 
 	testLogger := logger.NewZapLogger(zapLogger)
-
 	testDBConnString := ""
+	deleteChan := make(chan storage.DeleteRequest, 100)
 
-	urlShortener := NewURLShortener("http://localhost:8080", filePath, testDBConnString, true, testLogger)
+	urlShortener := NewURLShortener("http://localhost:8080", filePath, testDBConnString, true, testLogger, deleteChan)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -181,11 +182,11 @@ func TestPostJSONHandler(t *testing.T) {
 	}()
 
 	testLogger := logger.NewZapLogger(zapLogger)
-
 	testDBConnString := ""
+	deleteChan := make(chan storage.DeleteRequest, 100)
 
 	// Устанавливаем базовый URL для тестов.
-	urlShortener := NewURLShortener("http://localhost:8080", filePath, testDBConnString, true, testLogger)
+	urlShortener := NewURLShortener("http://localhost:8080", filePath, testDBConnString, true, testLogger, deleteChan)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -280,11 +281,11 @@ func TestPostHandler(t *testing.T) {
 	}()
 
 	testLogger := logger.NewZapLogger(zapLogger)
-
 	testDBConnString := ""
+	deleteChan := make(chan storage.DeleteRequest, 100)
 
 	// Устанавливаем базовый URL для тестов.
-	urlShortener := NewURLShortener("http://localhost:8080", filePath, testDBConnString, true, testLogger)
+	urlShortener := NewURLShortener("http://localhost:8080", filePath, testDBConnString, true, testLogger, deleteChan)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -339,8 +340,9 @@ func TestGetUserURLsHandler(t *testing.T) {
 	tempDir := t.TempDir()
 	filePath := filepath.Join(tempDir, "storage_test.json")
 	testDBConnString := ""
+	deleteChan := make(chan storage.DeleteRequest, 100)
 
-	urlShortener := NewURLShortener("http://localhost:8080", filePath, testDBConnString, true, testLogger)
+	urlShortener := NewURLShortener("http://localhost:8080", filePath, testDBConnString, true, testLogger, deleteChan)
 
 	if err := urlShortener.storage.SaveID(testUserID, testShortID, testURL); err != nil {
 		t.Errorf("Failed to save url in storage: %v", err)
@@ -413,10 +415,10 @@ func TestGetHandler(t *testing.T) {
 
 	tempDir := t.TempDir()
 	filePath := filepath.Join(tempDir, "storage_test.json")
-
 	testDBConnString := ""
+	deleteChan := make(chan storage.DeleteRequest, 100)
 
-	urlShortener := NewURLShortener("http://localhost:8080", filePath, testDBConnString, true, testLogger)
+	urlShortener := NewURLShortener("http://localhost:8080", filePath, testDBConnString, true, testLogger, deleteChan)
 	if err := urlShortener.storage.SaveID(testUserID, testID, testURL); err != nil {
 		t.Errorf("Failed to save url in memory: %v", err)
 		return
@@ -490,10 +492,10 @@ func TestConcurrentAccess(t *testing.T) {
 
 	tempDir := t.TempDir()
 	filePath := filepath.Join(tempDir, "storage_test.json")
-
 	testDBConnString := ""
+	deleteChan := make(chan storage.DeleteRequest, 100)
 
-	urlShortener := NewURLShortener("http://localhost:8080", filePath, testDBConnString, true, testLogger)
+	urlShortener := NewURLShortener("http://localhost:8080", filePath, testDBConnString, true, testLogger, deleteChan)
 
 	var wg sync.WaitGroup
 	const goroutines = 100

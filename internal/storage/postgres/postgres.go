@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/BrownBear56/contractor/internal/logger"
 	"github.com/jackc/pgx/v5"
@@ -47,12 +48,79 @@ func (p *PostgresStore) createSchema() error {
 		id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
 		short_id VARCHAR(12) UNIQUE NOT NULL,
 		original_url VARCHAR(255) UNIQUE NOT NULL,
-		user_id VARCHAR(36) NOT NULL
+		user_id VARCHAR(36) NOT NULL,
+		is_deleted BOOLEAN DEFAULT FALSE
 	);
 	`
 	if _, err := p.conn.Exec(context.Background(), query); err != nil {
 		return fmt.Errorf("failed to create schema: %w", err)
 	}
+	return nil
+}
+
+// makePlaceholders создаёт плейсхолдеры для запроса ($2, $3, ..., $N)
+func makePlaceholders(count, start int) []string {
+	placeholders := make([]string, count)
+	for i := range placeholders {
+		placeholders[i] = fmt.Sprintf("$%d", start+i)
+	}
+	return placeholders
+}
+
+func (p *PostgresStore) BatchDelete(userID string, urlIDs []string) error {
+	if len(urlIDs) == 0 {
+		return nil
+	}
+
+	query := fmt.Sprintf(
+		"UPDATE urls SET is_deleted = TRUE WHERE user_id = $1 AND short_url IN (%s)",
+		strings.Join(makePlaceholders(len(urlIDs), 2), ","),
+	)
+
+	args := make([]interface{}, len(urlIDs)+1)
+	args[0] = userID
+	for i, id := range urlIDs {
+		args[i+1] = id
+	}
+
+	_, err := p.conn.Exec(context.Background(), query, args...)
+	return err
+}
+
+func (p *PostgresStore) DeleteUserURLs(userID string, shortIDs []string) error {
+	if len(shortIDs) == 0 {
+		return nil
+	}
+
+	ctx := context.Background()
+	tx, err := p.conn.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() {
+		if err := tx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+			p.logger.Error("Failed to rollback transaction", zap.Error(err))
+		}
+	}()
+
+	batch := &pgx.Batch{}
+	for _, shortID := range shortIDs {
+		batch.Queue(
+			`UPDATE urls SET is_deleted = TRUE WHERE short_id = $1 AND user_id = $2`,
+			shortID, userID,
+		)
+	}
+
+	if err := tx.SendBatch(ctx, batch).Close(); err != nil {
+		p.logger.Error("SendBatch error", zap.Error(err))
+		return fmt.Errorf("send batch error: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		p.logger.Error("Failed to commit transaction", zap.Error(err))
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
 	return nil
 }
 

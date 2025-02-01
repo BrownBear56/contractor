@@ -20,12 +20,14 @@ import (
 	"github.com/BrownBear56/contractor/internal/gzip"
 	"github.com/BrownBear56/contractor/internal/handlers"
 	"github.com/BrownBear56/contractor/internal/logger"
+	"github.com/BrownBear56/contractor/internal/storage"
 )
 
 type Server struct {
-	router *chi.Mux
-	cfg    *config.Config
-	logger logger.Logger
+	router     *chi.Mux
+	cfg        *config.Config
+	logger     logger.Logger
+	deleteChan chan storage.DeleteRequest
 }
 
 func New(cfg *config.Config, parentLogger logger.Logger) *Server {
@@ -54,9 +56,10 @@ func New(cfg *config.Config, parentLogger logger.Logger) *Server {
 	}
 
 	s := &Server{
-		router: chi.NewRouter(),
-		cfg:    cfg,
-		logger: serverLogger,
+		router:     chi.NewRouter(),
+		cfg:        cfg,
+		logger:     serverLogger,
+		deleteChan: make(chan storage.DeleteRequest, 100),
 	}
 
 	s.logger.Info("Setup routers", zap.String("status", "processing"))
@@ -69,7 +72,9 @@ func New(cfg *config.Config, parentLogger logger.Logger) *Server {
 func (s *Server) setupRoutes(parentLogger logger.Logger) {
 	const useFile = true
 	urlShortener := handlers.NewURLShortener(
-		s.cfg.BaseURL, s.cfg.FileStoragePath, s.cfg.DatabaseDSN, useFile, parentLogger)
+		s.cfg.BaseURL, s.cfg.FileStoragePath, s.cfg.DatabaseDSN, useFile, parentLogger, s.deleteChan)
+
+	storage.StartDeleteWorker(context.Background(), urlShortener.GetStorage(), s.logger, s.deleteChan)
 
 	// Подключаем middleware.
 	s.router.Use(func(next http.Handler) http.Handler {
@@ -90,6 +95,7 @@ func (s *Server) setupRoutes(parentLogger logger.Logger) {
 	})
 	s.router.Get("/ping", urlShortener.PingHandler)
 	s.router.Get("/api/user/urls", urlShortener.GetUserURLsHandler)
+	s.router.Delete("/api/user/urls", urlShortener.DeleteUserURLsHandler)
 }
 
 func (s *Server) Start() error {

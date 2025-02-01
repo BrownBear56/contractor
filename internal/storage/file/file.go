@@ -31,6 +31,10 @@ func NewFileStore(filePath string, parentLogger logger.Logger) *FileStore {
 	return fs
 }
 
+func (p *FileStore) BatchDelete(userID string, urlIDs []string) error {
+	return nil
+}
+
 func (fs *FileStore) SaveID(userID, id, originalURL string) error {
 	if err := fs.memoryStore.SaveID(userID, id, originalURL); err != nil {
 		return fmt.Errorf("failed to save ID in memory store: %w", err)

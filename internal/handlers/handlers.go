@@ -37,6 +37,11 @@ type URLShortener struct {
 	logger     logger.Logger
 	dbConnPool *pgxpool.Pool
 	baseURL    string
+	deleteChan chan storage.DeleteRequest
+}
+
+func (u *URLShortener) GetStorage() storage.Storage {
+	return u.storage
 }
 
 func generateID() (string, error) {
@@ -115,6 +120,7 @@ func (u *URLShortener) getOrCreateShortURL(userID string, originalURL string) (s
 
 func NewURLShortener(baseURL string, fileStoragePath string,
 	dbDSN string, useFile bool, parentLogger logger.Logger,
+	deleteChan chan storage.DeleteRequest,
 ) *URLShortener {
 	// Настройки для нового логгера.
 	customEncoderConfig := zapcore.EncoderConfig{
@@ -158,7 +164,40 @@ func NewURLShortener(baseURL string, fileStoragePath string,
 		storage:    storage.NewStorage(fileStoragePath, useFile, dbDSN, parentLogger),
 		logger:     handlerLogger,
 		dbConnPool: dbPool,
+		deleteChan: deleteChan,
 	}
+}
+
+func (u *URLShortener) DeleteUserURLsHandler(w http.ResponseWriter, r *http.Request) {
+	var urlIDs []string
+
+	if err := json.NewDecoder(r.Body).Decode(&urlIDs); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if len(urlIDs) == 0 {
+		http.Error(w, "No URL IDs provided", http.StatusBadRequest)
+		return
+	}
+
+	// Получаем userID из контекста.
+	userID, ok := r.Context().Value(UserIDKey).(string)
+	if !ok || userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Отправляем задание на удаление в канал.
+	select {
+	case u.deleteChan <- storage.DeleteRequest{UserID: userID, URLIDs: urlIDs}:
+		u.logger.Info("Queued URLs for deletion", zap.String("userID", userID), zap.Int("count", len(urlIDs)))
+	default:
+		u.logger.Info("Delete channel is full, dropping request", zap.String("userID", userID))
+		http.Error(w, "Server busy", http.StatusServiceUnavailable)
+		return
+	}
+
+	w.WriteHeader(http.StatusAccepted)
 }
 
 func (u *URLShortener) GetUserURLsHandler(w http.ResponseWriter, r *http.Request) {

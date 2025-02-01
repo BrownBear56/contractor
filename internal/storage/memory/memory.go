@@ -21,6 +21,10 @@ func NewMemoryStore() *MemoryStore {
 	}
 }
 
+func (p *MemoryStore) BatchDelete(userID string, urlIDs []string) error {
+	return nil
+}
+
 func (s *MemoryStore) SaveID(userID, id, originalURL string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
