@@ -22,12 +22,26 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+// Сделал так, чтобы линтер не ругался. Может есть более элегантное решение?
+const (
+	ContentType               = "Content-Type"
+	ShortURLFormat            = "%s/%s"
+	UserIDKey      ContextKey = "userID"
+)
+
+type ContextKey string
+
 // URLShortener хранит базовый URL и объект Storage.
 type URLShortener struct {
 	storage    storage.Storage
 	logger     logger.Logger
 	dbConnPool *pgxpool.Pool
+	deleteChan chan storage.DeleteRequest
 	baseURL    string
+}
+
+func (u *URLShortener) GetStorage() storage.Storage {
+	return u.storage
 }
 
 func generateID() (string, error) {
@@ -76,10 +90,10 @@ func (u *URLShortener) getShortURL(originalURL string) (string, bool, error) {
 	return id, false, nil
 }
 
-func (u *URLShortener) getOrCreateShortURL(originalURL string) (string, bool, error) {
+func (u *URLShortener) getOrCreateShortURL(userID string, originalURL string) (string, bool, error) {
 	// Проверяем, существует ли уже такой URL.
 	if existingID, ok := u.storage.GetIDByURL(originalURL); ok {
-		return fmt.Sprintf("%s/%s", u.baseURL, existingID), true, nil
+		return fmt.Sprintf(ShortURLFormat, u.baseURL, existingID), true, nil
 	}
 
 	const maxRetries = 10
@@ -91,7 +105,7 @@ func (u *URLShortener) getOrCreateShortURL(originalURL string) (string, bool, er
 			continue
 		}
 
-		if err := u.storage.SaveID(generatedID, originalURL); err == nil {
+		if err := u.storage.SaveID(userID, generatedID, originalURL); err == nil {
 			id = generatedID
 			break
 		}
@@ -101,11 +115,12 @@ func (u *URLShortener) getOrCreateShortURL(originalURL string) (string, bool, er
 		return "", false, errors.New("all attempts to generate a unique ID failed")
 	}
 
-	return fmt.Sprintf("%s/%s", u.baseURL, id), false, nil
+	return fmt.Sprintf(ShortURLFormat, u.baseURL, id), false, nil
 }
 
 func NewURLShortener(baseURL string, fileStoragePath string,
 	dbDSN string, useFile bool, parentLogger logger.Logger,
+	deleteChan chan storage.DeleteRequest,
 ) *URLShortener {
 	// Настройки для нового логгера.
 	customEncoderConfig := zapcore.EncoderConfig{
@@ -149,7 +164,72 @@ func NewURLShortener(baseURL string, fileStoragePath string,
 		storage:    storage.NewStorage(fileStoragePath, useFile, dbDSN, parentLogger),
 		logger:     handlerLogger,
 		dbConnPool: dbPool,
+		deleteChan: deleteChan,
 	}
+}
+
+func (u *URLShortener) DeleteUserURLsHandler(w http.ResponseWriter, r *http.Request) {
+	var urlIDs []string
+
+	if err := json.NewDecoder(r.Body).Decode(&urlIDs); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if len(urlIDs) == 0 {
+		http.Error(w, "No URL IDs provided", http.StatusBadRequest)
+		return
+	}
+
+	// Получаем userID из контекста.
+	userID, ok := r.Context().Value(UserIDKey).(string)
+	if !ok || userID == "" {
+		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+		return
+	}
+
+	// Отправляем задание на удаление в канал.
+	select {
+	case u.deleteChan <- storage.DeleteRequest{UserID: userID, URLIDs: urlIDs}:
+		u.logger.Info("Queued URLs for deletion", zap.String("userID", userID), zap.Int("count", len(urlIDs)))
+	default:
+		u.logger.Info("Delete channel is full, dropping request", zap.String("userID", userID))
+		http.Error(w, "Server busy", http.StatusServiceUnavailable)
+		return
+	}
+
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func (u *URLShortener) GetUserURLsHandler(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(UserIDKey).(string)
+	if !ok || userID == "" {
+		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+		return
+	}
+
+	urls, ok := u.storage.GetUserURLs(userID)
+	if !ok {
+		u.logger.Error("failed to fetch user URLs", zap.String("userID", userID))
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	if len(urls) == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	userURLsResults := make([]models.UserURLs, 0, len(urls))
+
+	for shortURL, originalURL := range urls {
+		userURLsResults = append(userURLsResults, models.UserURLs{
+			ShortURL:    fmt.Sprintf(ShortURLFormat, u.baseURL, shortURL),
+			OriginalURL: originalURL,
+		})
+	}
+
+	w.Header().Set(ContentType, "application/json")
+	_ = json.NewEncoder(w).Encode(userURLsResults)
 }
 
 func (u *URLShortener) PingHandler(w http.ResponseWriter, r *http.Request) {
@@ -167,6 +247,12 @@ func (u *URLShortener) PingHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (u *URLShortener) PostBatchHandler(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(UserIDKey).(string)
+	if !ok || userID == "" {
+		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+		return
+	}
+
 	var requests []models.BatchRequest
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -203,23 +289,29 @@ func (u *URLShortener) PostBatchHandler(w http.ResponseWriter, r *http.Request) 
 
 		// Формируем результат
 		batchResults = append(batchResults, models.BatchResponse{
-			CorrelationID: req.CorrelationID,                   // Оригинальный correlationID
-			ShortURL:      fmt.Sprintf("%s/%s", u.baseURL, id), // Сформированный короткий URL
+			CorrelationID: req.CorrelationID,                          // Оригинальный correlationID
+			ShortURL:      fmt.Sprintf(ShortURLFormat, u.baseURL, id), // Сформированный короткий URL
 		})
 	}
 
-	if err := u.storage.SaveBatch(pairs); err != nil {
+	if err := u.storage.SaveBatch(userID, pairs); err != nil {
 		u.logger.Error("Save batch error", zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(ContentType, "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(batchResults)
 }
 
 func (u *URLShortener) PostJSONHandler(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(UserIDKey).(string)
+	if !ok || userID == "" {
+		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+		return
+	}
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
@@ -238,7 +330,7 @@ func (u *URLShortener) PostJSONHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	shortURL, ok, err := u.getOrCreateShortURL(originalURL)
+	shortURL, ok, err := u.getOrCreateShortURL(userID, originalURL)
 	if err != nil {
 		u.logger.Error("failed to process URL", zap.String("originalURL", originalURL), zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
@@ -246,7 +338,7 @@ func (u *URLShortener) PostJSONHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := models.Response{Result: shortURL}
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(ContentType, "application/json")
 	if ok {
 		w.WriteHeader(http.StatusConflict) // URL уже существует.
 	} else {
@@ -260,6 +352,12 @@ func (u *URLShortener) PostJSONHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (u *URLShortener) PostHandler(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(UserIDKey).(string)
+	if !ok || userID == "" {
+		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+		return
+	}
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
@@ -272,14 +370,14 @@ func (u *URLShortener) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	shortURL, ok, err := u.getOrCreateShortURL(originalURL)
+	shortURL, ok, err := u.getOrCreateShortURL(userID, originalURL)
 	if err != nil {
 		u.logger.Error("failed to process URL", zap.String("originalURL", originalURL), zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/plain")
+	w.Header().Set(ContentType, "text/plain")
 	if ok {
 		w.WriteHeader(http.StatusConflict) // URL уже существует.
 	} else {
@@ -295,9 +393,12 @@ func (u *URLShortener) GetHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	originalURL, ok := u.storage.Get(id)
+	originalURL, ok, isDeleted := u.storage.Get(id)
 	if !ok {
 		http.Error(w, "ID not found", http.StatusBadRequest)
+		return
+	} else if isDeleted {
+		http.Error(w, http.StatusText(http.StatusGone), http.StatusGone)
 		return
 	}
 
