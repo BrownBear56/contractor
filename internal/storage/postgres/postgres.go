@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/BrownBear56/contractor/internal/logger"
 	"github.com/jackc/pgx/v5"
@@ -67,7 +66,7 @@ func makePlaceholders(count, start int) []string {
 	return placeholders
 }
 
-func (p *PostgresStore) BatchDelete(userID string, urlIDs []string) error {
+/*func (p *PostgresStore) BatchDelete(userID string, urlIDs []string) error {
 	if len(urlIDs) == 0 {
 		return nil
 	}
@@ -95,9 +94,9 @@ func (p *PostgresStore) BatchDelete(userID string, urlIDs []string) error {
 		return fmt.Errorf("ошибка при удалении: %w", err)
 	}
 	return nil
-}
+}*/
 
-func (p *PostgresStore) DeleteUserURLs(userID string, shortIDs []string) error {
+func (p *PostgresStore) BatchDelete(userID string, shortIDs []string) error {
 	if len(shortIDs) == 0 {
 		return nil
 	}
