@@ -36,8 +36,8 @@ type URLShortener struct {
 	storage    storage.Storage
 	logger     logger.Logger
 	dbConnPool *pgxpool.Pool
-	baseURL    string
 	deleteChan chan storage.DeleteRequest
+	baseURL    string
 }
 
 func (u *URLShortener) GetStorage() storage.Storage {
@@ -183,7 +183,7 @@ func (u *URLShortener) DeleteUserURLsHandler(w http.ResponseWriter, r *http.Requ
 	// Получаем userID из контекста.
 	userID, ok := r.Context().Value(UserIDKey).(string)
 	if !ok || userID == "" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 		return
 	}
 
@@ -249,7 +249,7 @@ func (u *URLShortener) PingHandler(w http.ResponseWriter, r *http.Request) {
 func (u *URLShortener) PostBatchHandler(w http.ResponseWriter, r *http.Request) {
 	userID, ok := r.Context().Value(UserIDKey).(string)
 	if !ok || userID == "" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 		return
 	}
 
@@ -308,7 +308,7 @@ func (u *URLShortener) PostBatchHandler(w http.ResponseWriter, r *http.Request) 
 func (u *URLShortener) PostJSONHandler(w http.ResponseWriter, r *http.Request) {
 	userID, ok := r.Context().Value(UserIDKey).(string)
 	if !ok || userID == "" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 		return
 	}
 
@@ -354,7 +354,7 @@ func (u *URLShortener) PostJSONHandler(w http.ResponseWriter, r *http.Request) {
 func (u *URLShortener) PostHandler(w http.ResponseWriter, r *http.Request) {
 	userID, ok := r.Context().Value(UserIDKey).(string)
 	if !ok || userID == "" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 		return
 	}
 

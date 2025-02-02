@@ -58,7 +58,7 @@ func (p *PostgresStore) createSchema() error {
 	return nil
 }
 
-// makePlaceholders создаёт плейсхолдеры для запроса ($2, $3, ..., $N)
+// makePlaceholders создаёт плейсхолдеры для запроса ($2, $3, ..., $N).
 func makePlaceholders(count, start int) []string {
 	placeholders := make([]string, count)
 	for i := range placeholders {
@@ -72,9 +72,11 @@ func (p *PostgresStore) BatchDelete(userID string, urlIDs []string) error {
 		return nil
 	}
 
+	argumentCount := 2
+
 	query := fmt.Sprintf(
-		"UPDATE urls SET is_deleted = TRUE WHERE user_id = $1 AND short_url IN (%s)",
-		strings.Join(makePlaceholders(len(urlIDs), 2), ","),
+		"UPDATE urls SET is_deleted = TRUE WHERE user_id = $1 AND short_id IN (%s)",
+		strings.Join(makePlaceholders(len(urlIDs), argumentCount), ","),
 	)
 
 	args := make([]interface{}, len(urlIDs)+1)
@@ -84,7 +86,15 @@ func (p *PostgresStore) BatchDelete(userID string, urlIDs []string) error {
 	}
 
 	_, err := p.conn.Exec(context.Background(), query, args...)
-	return err
+	if err != nil {
+		if wrappedErr := errors.Unwrap(err); wrappedErr != nil {
+			p.logger.Error("Не удалось выполнить удаление с внутренней ошибкой", zap.Error(wrappedErr))
+		} else {
+			p.logger.Error("Не удалось выполнить удаление", zap.Error(err))
+		}
+		return fmt.Errorf("ошибка при удалении: %w", err)
+	}
+	return nil
 }
 
 func (p *PostgresStore) DeleteUserURLs(userID string, shortIDs []string) error {

@@ -65,17 +65,18 @@ func NewStorage(filePath string, useFile bool, dbDSN string, parentLogger logger
 	return memory.NewMemoryStore()
 }
 
-func StartDeleteWorker(ctx context.Context, store Storage, logger logger.Logger, deleteChan <-chan DeleteRequest) {
+func StartDeleteWorker(
+	ctx context.Context, store Storage, serverLogger logger.Logger, deleteChan <-chan DeleteRequest) {
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
-				logger.Info("Delete worker stopped")
+				serverLogger.Info("Delete worker stopped")
 				return
 			case req := <-deleteChan:
-				logger.Info("Processing delete request", zap.String("userID", req.UserID), zap.Int("count", len(req.URLIDs)))
+				serverLogger.Info("Processing delete request", zap.String("userID", req.UserID), zap.Int("count", len(req.URLIDs)))
 				if err := store.BatchDelete(req.UserID, req.URLIDs); err != nil {
-					logger.Error("Failed to delete URLs", zap.Error(err))
+					serverLogger.Error("Failed to delete URLs", zap.Error(err))
 				}
 			}
 		}

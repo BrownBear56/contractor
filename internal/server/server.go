@@ -55,11 +55,13 @@ func New(cfg *config.Config, parentLogger logger.Logger) *Server {
 		log.Fatalf("Failed to reconfigure logger: %v", err)
 	}
 
+	const maxURLIDs = 100
+
 	s := &Server{
 		router:     chi.NewRouter(),
 		cfg:        cfg,
 		logger:     serverLogger,
-		deleteChan: make(chan storage.DeleteRequest, 100),
+		deleteChan: make(chan storage.DeleteRequest, maxURLIDs),
 	}
 
 	s.logger.Info("Setup routers", zap.String("status", "processing"))

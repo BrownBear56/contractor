@@ -31,7 +31,7 @@ func NewFileStore(filePath string, parentLogger logger.Logger) *FileStore {
 	return fs
 }
 
-func (p *FileStore) BatchDelete(userID string, urlIDs []string) error {
+func (fs *FileStore) BatchDelete(userID string, urlIDs []string) error {
 	return nil
 }
 

@@ -21,7 +21,7 @@ func NewMemoryStore() *MemoryStore {
 	}
 }
 
-func (p *MemoryStore) BatchDelete(userID string, urlIDs []string) error {
+func (s *MemoryStore) BatchDelete(userID string, urlIDs []string) error {
 	return nil
 }
 
