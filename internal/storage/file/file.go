@@ -46,7 +46,7 @@ func (fs *FileStore) SaveID(userID, id, originalURL string) error {
 	return nil
 }
 
-func (fs *FileStore) Get(id string) (string, bool) {
+func (fs *FileStore) Get(id string) (string, bool, bool) {
 	return fs.memoryStore.Get(id)
 }
 

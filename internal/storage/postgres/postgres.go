@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/BrownBear56/contractor/internal/logger"
 	"github.com/jackc/pgx/v5"
@@ -66,7 +67,7 @@ func makePlaceholders(count, start int) []string {
 	return placeholders
 }
 
-/*func (p *PostgresStore) BatchDelete(userID string, urlIDs []string) error {
+func (p *PostgresStore) BatchDelete(userID string, urlIDs []string) error {
 	if len(urlIDs) == 0 {
 		return nil
 	}
@@ -94,43 +95,6 @@ func makePlaceholders(count, start int) []string {
 		return fmt.Errorf("ошибка при удалении: %w", err)
 	}
 	return nil
-}*/
-
-func (p *PostgresStore) BatchDelete(userID string, shortIDs []string) error {
-	if len(shortIDs) == 0 {
-		return nil
-	}
-
-	ctx := context.Background()
-	tx, err := p.conn.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() {
-		if err := tx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
-			p.logger.Error("Failed to rollback transaction", zap.Error(err))
-		}
-	}()
-
-	batch := &pgx.Batch{}
-	for _, shortID := range shortIDs {
-		batch.Queue(
-			`UPDATE urls SET is_deleted = TRUE WHERE short_id = $1 AND user_id = $2`,
-			shortID, userID,
-		)
-	}
-
-	if err := tx.SendBatch(ctx, batch).Close(); err != nil {
-		p.logger.Error("SendBatch error", zap.Error(err))
-		return fmt.Errorf("send batch error: %w", err)
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		p.logger.Error("Failed to commit transaction", zap.Error(err))
-		return fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
-	return nil
 }
 
 func (p *PostgresStore) SaveID(userID, id, originalURL string) error {
@@ -148,18 +112,21 @@ func (p *PostgresStore) SaveID(userID, id, originalURL string) error {
 	return nil
 }
 
-func (p *PostgresStore) Get(id string) (string, bool) {
-	query := `SELECT original_url FROM urls WHERE short_id = $1;`
+func (p *PostgresStore) Get(id string) (string, bool, bool) {
+	query := `SELECT original_url, is_deleted FROM urls WHERE short_id = $1;`
 	var originalURL string
-	err := p.conn.QueryRow(context.Background(), query, id).Scan(&originalURL)
+	var isDeleted bool
+
+	err := p.conn.QueryRow(context.Background(), query, id).Scan(&originalURL, &isDeleted)
 	if err != nil {
-		if err.Error() == "no rows in result set" {
-			return "", false
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", false, false
 		}
 		p.logger.Error("Failed to get URL", zap.Error(err))
-		return "", false
+		return "", false, false
 	}
-	return originalURL, true
+
+	return originalURL, true, isDeleted
 }
 
 func (p *PostgresStore) GetIDByURL(originalURL string) (string, bool) {

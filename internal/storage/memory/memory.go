@@ -43,11 +43,11 @@ func (s *MemoryStore) SaveID(userID, id, originalURL string) error {
 	return nil
 }
 
-func (s *MemoryStore) Get(id string) (string, bool) {
+func (s *MemoryStore) Get(id string) (string, bool, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	originalURL, ok := s.URLs[id]
-	return originalURL, ok
+	return originalURL, ok, false
 }
 
 func (s *MemoryStore) GetIDByURL(originalURL string) (string, bool) {

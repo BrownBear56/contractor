@@ -393,9 +393,12 @@ func (u *URLShortener) GetHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	originalURL, ok := u.storage.Get(id)
+	originalURL, ok, isDeleted := u.storage.Get(id)
 	if !ok {
 		http.Error(w, "ID not found", http.StatusBadRequest)
+		return
+	} else if isDeleted {
+		http.Error(w, http.StatusText(http.StatusGone), http.StatusGone)
 		return
 	}
 

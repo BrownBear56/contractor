@@ -19,7 +19,7 @@ type DeleteRequest struct {
 
 type Storage interface {
 	SaveID(userID, id, originalURL string) error
-	Get(id string) (string, bool)
+	Get(id string) (string, bool, bool)
 	GetIDByURL(originalURL string) (string, bool)
 	SaveBatch(userID string, pairs map[string]string) error
 	GetUserURLs(userID string) (map[string]string, bool)
