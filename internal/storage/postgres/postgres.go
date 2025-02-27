@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/BrownBear56/contractor/internal/logger"
 	"github.com/jackc/pgx/v5"
@@ -46,7 +47,9 @@ func (p *PostgresStore) createSchema() error {
 	CREATE TABLE IF NOT EXISTS urls (
 		id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
 		short_id VARCHAR(12) UNIQUE NOT NULL,
-		original_url VARCHAR(255) UNIQUE NOT NULL
+		original_url VARCHAR(255) UNIQUE NOT NULL,
+		user_id VARCHAR(36) NOT NULL,
+		is_deleted BOOLEAN DEFAULT FALSE
 	);
 	`
 	if _, err := p.conn.Exec(context.Background(), query); err != nil {
@@ -55,9 +58,48 @@ func (p *PostgresStore) createSchema() error {
 	return nil
 }
 
-func (p *PostgresStore) SaveID(id, originalURL string) error {
-	query := `INSERT INTO urls (short_id, original_url) VALUES ($1, $2) ON CONFLICT DO NOTHING;`
-	_, err := p.conn.Exec(context.Background(), query, id, originalURL)
+// makePlaceholders создаёт плейсхолдеры для запроса ($2, $3, ..., $N).
+func makePlaceholders(count, start int) []string {
+	placeholders := make([]string, count)
+	for i := range placeholders {
+		placeholders[i] = fmt.Sprintf("$%d", start+i)
+	}
+	return placeholders
+}
+
+func (p *PostgresStore) BatchDelete(userID string, urlIDs []string) error {
+	if len(urlIDs) == 0 {
+		return nil
+	}
+
+	argumentCount := 2
+
+	query := fmt.Sprintf(
+		"UPDATE urls SET is_deleted = TRUE WHERE user_id = $1 AND short_id IN (%s)",
+		strings.Join(makePlaceholders(len(urlIDs), argumentCount), ","),
+	)
+
+	args := make([]interface{}, len(urlIDs)+1)
+	args[0] = userID
+	for i, id := range urlIDs {
+		args[i+1] = id
+	}
+
+	_, err := p.conn.Exec(context.Background(), query, args...)
+	if err != nil {
+		if wrappedErr := errors.Unwrap(err); wrappedErr != nil {
+			p.logger.Error("Не удалось выполнить удаление с внутренней ошибкой", zap.Error(wrappedErr))
+		} else {
+			p.logger.Error("Не удалось выполнить удаление", zap.Error(err))
+		}
+		return fmt.Errorf("ошибка при удалении: %w", err)
+	}
+	return nil
+}
+
+func (p *PostgresStore) SaveID(userID, id, originalURL string) error {
+	query := `INSERT INTO urls (short_id, original_url, user_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING;`
+	_, err := p.conn.Exec(context.Background(), query, id, originalURL, userID)
 	if err != nil {
 		// Здесь можно проверить, если ошибка обернута, и распаковать ее
 		if wrappedErr := errors.Unwrap(err); wrappedErr != nil {
@@ -65,23 +107,26 @@ func (p *PostgresStore) SaveID(id, originalURL string) error {
 		} else {
 			p.logger.Error("Не удалось сохранить ID", zap.Error(err))
 		}
-		return fmt.Errorf("ошибка при сохранении ID: %w", err) // Обернуть ошибку правильно
+		return fmt.Errorf("ошибка при сохранении ID: %w", err)
 	}
 	return nil
 }
 
-func (p *PostgresStore) Get(id string) (string, bool) {
-	query := `SELECT original_url FROM urls WHERE short_id = $1;`
+func (p *PostgresStore) Get(id string) (string, bool, bool) {
+	query := `SELECT original_url, is_deleted FROM urls WHERE short_id = $1;`
 	var originalURL string
-	err := p.conn.QueryRow(context.Background(), query, id).Scan(&originalURL)
+	var isDeleted bool
+
+	err := p.conn.QueryRow(context.Background(), query, id).Scan(&originalURL, &isDeleted)
 	if err != nil {
-		if err.Error() == "no rows in result set" {
-			return "", false
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", false, false
 		}
 		p.logger.Error("Failed to get URL", zap.Error(err))
-		return "", false
+		return "", false, false
 	}
-	return originalURL, true
+
+	return originalURL, true, isDeleted
 }
 
 func (p *PostgresStore) GetIDByURL(originalURL string) (string, bool) {
@@ -98,7 +143,28 @@ func (p *PostgresStore) GetIDByURL(originalURL string) (string, bool) {
 	return id, true
 }
 
-func (p *PostgresStore) SaveBatch(pairs map[string]string) error {
+func (p *PostgresStore) GetUserURLs(userID string) (map[string]string, bool) {
+	query := `SELECT short_id, original_url FROM urls WHERE user_id = $1;`
+	rows, err := p.conn.Query(context.Background(), query, userID)
+	if err != nil {
+		p.logger.Error("Failed to get user URLs", zap.Error(err))
+		return nil, false
+	}
+	defer rows.Close()
+
+	urls := make(map[string]string)
+	for rows.Next() {
+		var shortID, originalURL string
+		if err := rows.Scan(&shortID, &originalURL); err != nil {
+			p.logger.Error("Failed to scan row", zap.Error(err))
+			return nil, false
+		}
+		urls[shortID] = originalURL
+	}
+	return urls, true
+}
+
+func (p *PostgresStore) SaveBatch(userID string, pairs map[string]string) error {
 	ctx := context.Background()
 	tx, err := p.conn.Begin(ctx)
 	if err != nil {
@@ -112,7 +178,12 @@ func (p *PostgresStore) SaveBatch(pairs map[string]string) error {
 
 	batch := &pgx.Batch{}
 	for id, originalURL := range pairs {
-		batch.Queue(`INSERT INTO urls (short_id, original_url) VALUES ($1, $2) ON CONFLICT DO NOTHING`, id, originalURL)
+		batch.Queue(
+			`INSERT INTO urls (short_id, original_url, user_id) 
+			VALUES ($1, $2, $3) 
+			ON CONFLICT DO NOTHING`,
+			id, originalURL, userID,
+		)
 	}
 
 	err = tx.SendBatch(ctx, batch).Close()

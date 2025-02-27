@@ -1,20 +1,29 @@
 package storage
 
 import (
+	"context"
 	"log"
 
 	"github.com/BrownBear56/contractor/internal/logger"
 	"github.com/BrownBear56/contractor/internal/storage/file"
 	"github.com/BrownBear56/contractor/internal/storage/memory"
 	"github.com/BrownBear56/contractor/internal/storage/postgres"
+	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
+type DeleteRequest struct {
+	UserID string
+	URLIDs []string
+}
+
 type Storage interface {
-	SaveID(id, originalURL string) error
-	Get(id string) (string, bool)
+	SaveID(userID, id, originalURL string) error
+	Get(id string) (string, bool, bool)
 	GetIDByURL(originalURL string) (string, bool)
-	SaveBatch(pairs map[string]string) error
+	SaveBatch(userID string, pairs map[string]string) error
+	GetUserURLs(userID string) (map[string]string, bool)
+	BatchDelete(userID string, urlIDs []string) error
 }
 
 func NewStorage(filePath string, useFile bool, dbDSN string, parentLogger logger.Logger) Storage {
@@ -54,4 +63,22 @@ func NewStorage(filePath string, useFile bool, dbDSN string, parentLogger logger
 		return file.NewFileStore(filePath, storageLogger)
 	}
 	return memory.NewMemoryStore()
+}
+
+func StartDeleteWorker(
+	ctx context.Context, store Storage, serverLogger logger.Logger, deleteChan <-chan DeleteRequest) {
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				serverLogger.Info("Delete worker stopped")
+				return
+			case req := <-deleteChan:
+				serverLogger.Info("Processing delete request", zap.String("userID", req.UserID), zap.Int("count", len(req.URLIDs)))
+				if err := store.BatchDelete(req.UserID, req.URLIDs); err != nil {
+					serverLogger.Error("Failed to delete URLs", zap.Error(err))
+				}
+			}
+		}
+	}()
 }

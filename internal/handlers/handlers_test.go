@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/BrownBear56/contractor/internal/logger"
 	"github.com/BrownBear56/contractor/internal/models"
+	"github.com/BrownBear56/contractor/internal/storage"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
 )
@@ -66,6 +69,7 @@ func TestPostBatchHandler(t *testing.T) {
 		},
 	}
 
+	testUserID := "2d53aef9-d077-4d47-96ef-9d23fc5d2d5f"
 	tempDir := t.TempDir()
 	filePath := filepath.Join(tempDir, "storage_test.json")
 	zapLogger, err := zap.NewDevelopment()
@@ -78,14 +82,16 @@ func TestPostBatchHandler(t *testing.T) {
 	}()
 
 	testLogger := logger.NewZapLogger(zapLogger)
-
 	testDBConnString := ""
+	deleteChan := make(chan storage.DeleteRequest, 100)
 
-	urlShortener := NewURLShortener("http://localhost:8080", filePath, testDBConnString, true, testLogger)
+	urlShortener := NewURLShortener("http://localhost:8080", filePath, testDBConnString, true, testLogger, deleteChan)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(tt.body))
+			ctx := context.WithValue(req.Context(), UserIDKey, testUserID)
+			req = req.WithContext(ctx)
 			req.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
 
@@ -162,6 +168,7 @@ func TestPostJSONHandler(t *testing.T) {
 		},
 	}
 
+	testUserID := "2d53aef9-d077-4d47-96ef-9d23fc5d2d5f"
 	// Создаём временную директорию для теста.
 	tempDir := t.TempDir()
 	filePath := filepath.Join(tempDir, "storage_test.json")
@@ -175,15 +182,17 @@ func TestPostJSONHandler(t *testing.T) {
 	}()
 
 	testLogger := logger.NewZapLogger(zapLogger)
-
 	testDBConnString := ""
+	deleteChan := make(chan storage.DeleteRequest, 100)
 
 	// Устанавливаем базовый URL для тестов.
-	urlShortener := NewURLShortener("http://localhost:8080", filePath, testDBConnString, true, testLogger)
+	urlShortener := NewURLShortener("http://localhost:8080", filePath, testDBConnString, true, testLogger, deleteChan)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(tt.body))
+			ctx := context.WithValue(req.Context(), UserIDKey, testUserID)
+			req = req.WithContext(ctx)
 			req.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
 
@@ -258,6 +267,7 @@ func TestPostHandler(t *testing.T) {
 		},
 	}
 
+	testUserID := "2d53aef9-d077-4d47-96ef-9d23fc5d2d5f"
 	// Создаём временную директорию для теста.
 	tempDir := t.TempDir()
 	filePath := filepath.Join(tempDir, "storage_test.json")
@@ -271,15 +281,17 @@ func TestPostHandler(t *testing.T) {
 	}()
 
 	testLogger := logger.NewZapLogger(zapLogger)
-
 	testDBConnString := ""
+	deleteChan := make(chan storage.DeleteRequest, 100)
 
 	// Устанавливаем базовый URL для тестов.
-	urlShortener := NewURLShortener("http://localhost:8080", filePath, testDBConnString, true, testLogger)
+	urlShortener := NewURLShortener("http://localhost:8080", filePath, testDBConnString, true, testLogger, deleteChan)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(tt.body))
+			ctx := context.WithValue(req.Context(), UserIDKey, testUserID)
+			req = req.WithContext(ctx)
 			w := httptest.NewRecorder()
 
 			urlShortener.PostHandler(w, req)
@@ -309,7 +321,85 @@ func TestPostHandler(t *testing.T) {
 	}
 }
 
+func TestGetUserURLsHandler(t *testing.T) {
+	testUserID := "2d53aef9-d077-4d47-96ef-9d23fc5d2d5f"
+	testShortID := "testID"
+	testURL := "http://example.com"
+
+	zapLogger, err := zap.NewDevelopment()
+	if err != nil {
+		t.Errorf("Failed to initialize logger: %v", err)
+		return
+	}
+	defer func() {
+		_ = zapLogger.Sync()
+	}()
+
+	testLogger := logger.NewZapLogger(zapLogger)
+
+	tempDir := t.TempDir()
+	filePath := filepath.Join(tempDir, "storage_test.json")
+	testDBConnString := ""
+	deleteChan := make(chan storage.DeleteRequest, 100)
+
+	urlShortener := NewURLShortener("http://localhost:8080", filePath, testDBConnString, true, testLogger, deleteChan)
+
+	if err := urlShortener.storage.SaveID(testUserID, testShortID, testURL); err != nil {
+		t.Errorf("Failed to save url in storage: %v", err)
+		return
+	}
+
+	tests := []struct {
+		name           string
+		userID         string
+		expectedStatus int
+		expectedBody   string
+	}{
+		{
+			name:           "Valid User ID",
+			userID:         testUserID,
+			expectedStatus: http.StatusOK,
+			expectedBody:   fmt.Sprintf(`[{"short_url":"http://localhost:8080/%s","original_url":%q}]`, testShortID, testURL),
+		},
+		{
+			name:           "Unauthorized - Missing User ID",
+			userID:         "",
+			expectedStatus: http.StatusUnauthorized,
+			expectedBody:   "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/user/urls", http.NoBody)
+
+			// Добавляем userID в контекст
+			ctx := context.WithValue(req.Context(), UserIDKey, tt.userID)
+			req = req.WithContext(ctx)
+
+			w := httptest.NewRecorder()
+			urlShortener.GetUserURLsHandler(w, req)
+
+			resp := w.Result()
+			defer func() {
+				if err := resp.Body.Close(); err != nil {
+					t.Errorf("failed to close response body: %v", err)
+					return
+				}
+			}()
+
+			assert.Equal(t, tt.expectedStatus, resp.StatusCode, "Unexpected status code")
+
+			if tt.expectedStatus == http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				assert.JSONEq(t, tt.expectedBody, string(body), "Unexpected response body")
+			}
+		})
+	}
+}
+
 func TestGetHandler(t *testing.T) {
+	testUserID := "2d53aef9-d077-4d47-96ef-9d23fc5d2d5f"
 	testID := "testID"
 	testURL := "http://example.com"
 	zapLogger, err := zap.NewDevelopment()
@@ -325,11 +415,11 @@ func TestGetHandler(t *testing.T) {
 
 	tempDir := t.TempDir()
 	filePath := filepath.Join(tempDir, "storage_test.json")
-
 	testDBConnString := ""
+	deleteChan := make(chan storage.DeleteRequest, 100)
 
-	urlShortener := NewURLShortener("http://localhost:8080", filePath, testDBConnString, true, testLogger)
-	if err := urlShortener.storage.SaveID(testID, testURL); err != nil {
+	urlShortener := NewURLShortener("http://localhost:8080", filePath, testDBConnString, true, testLogger, deleteChan)
+	if err := urlShortener.storage.SaveID(testUserID, testID, testURL); err != nil {
 		t.Errorf("Failed to save url in memory: %v", err)
 		return
 	}
@@ -397,14 +487,15 @@ func TestConcurrentAccess(t *testing.T) {
 		_ = zapLogger.Sync()
 	}()
 
+	testUserID := "2d53aef9-d077-4d47-96ef-9d23fc5d2d5f"
 	testLogger := logger.NewZapLogger(zapLogger)
 
 	tempDir := t.TempDir()
 	filePath := filepath.Join(tempDir, "storage_test.json")
-
 	testDBConnString := ""
+	deleteChan := make(chan storage.DeleteRequest, 100)
 
-	urlShortener := NewURLShortener("http://localhost:8080", filePath, testDBConnString, true, testLogger)
+	urlShortener := NewURLShortener("http://localhost:8080", filePath, testDBConnString, true, testLogger, deleteChan)
 
 	var wg sync.WaitGroup
 	const goroutines = 100
@@ -416,6 +507,8 @@ func TestConcurrentAccess(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(url))
+			ctx := context.WithValue(req.Context(), UserIDKey, testUserID)
+			req = req.WithContext(ctx)
 			w := httptest.NewRecorder()
 
 			urlShortener.PostHandler(w, req)

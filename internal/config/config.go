@@ -14,6 +14,7 @@ type Config struct {
 	BaseURL         string
 	FileStoragePath string
 	DatabaseDSN     string
+	SecretKey       string
 }
 
 func NewConfig(parentLogger logger.Logger) *Config {
@@ -46,6 +47,7 @@ func NewConfig(parentLogger logger.Logger) *Config {
 	baseURLFlag := flag.String("b", "http://localhost:8080", "Base URL for shortened links.")
 	filePathFlag := flag.String("f", "storage.json", "Path to file storage.")
 	databaseDSNFlag := flag.String("d", "", "Database connection string.")
+	secretKeyFlag := flag.String("s", "6f93af12-1e71-4277-8575-cb3d695a7d1f", "API secret key")
 
 	flag.Parse()
 
@@ -70,6 +72,11 @@ func NewConfig(parentLogger logger.Logger) *Config {
 		databaseDSN = envDSN
 	}
 
+	secretKey := *secretKeyFlag
+	if envKey, ok := os.LookupEnv("API_SECRET_Key"); ok {
+		secretKey = envKey
+	}
+
 	// Валидация базового URL.
 	if baseURL == "" {
 		configLogger.Info("Base URL cannot be empty. Using default value.")
@@ -81,5 +88,6 @@ func NewConfig(parentLogger logger.Logger) *Config {
 		BaseURL:         baseURL,
 		FileStoragePath: fileStoragePath,
 		DatabaseDSN:     databaseDSN,
+		SecretKey:       secretKey,
 	}
 }
